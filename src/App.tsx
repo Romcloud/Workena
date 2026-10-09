@@ -5,11 +5,14 @@ import {
   CheckCircle2,
   Clock3,
   ClipboardList,
+  ChevronDown,
+  ChevronUp,
   LayoutDashboard,
   LogOut,
   MapPin,
   Pencil,
   Plus,
+  Printer,
   ShieldCheck,
   Trash2,
   Users,
@@ -17,7 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase";
+import { supabase, supabaseConfigurationError } from "./lib/supabase";
 import type { Company, EntryStatus, Membership, Photo, Role, WorkEntry } from "./lib/types";
 
 type WorkspaceMembership = Membership & { company: Company };
@@ -39,6 +42,11 @@ function initials(name: string) {
 
 function dateLabel(value: string) {
   return new Intl.DateTimeFormat("sk-SK", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
+}
+
+function localDateKey(value: string) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function hoursLabel(value: number) {
@@ -67,6 +75,7 @@ export function App() {
   const [roster, setRoster] = useState<Membership[]>([]);
   const [page, setPage] = useState<Page>("dashboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
   const [photos, setPhotos] = useState<PhotoView[]>([]);
   const [busy, setBusy] = useState(false);
@@ -488,15 +497,52 @@ export function App() {
     setBusy(false);
   };
 
-  const monthHours = useMemo(() => {
+  const monthlyEntries = useMemo(() => {
     const now = new Date();
     return entries
       .filter((entry) => {
         const date = new Date(entry.worked_at);
-        return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+        return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()
+          && (isManager || entry.user_id === session?.user.id);
+      });
+  }, [entries, isManager, session?.user.id]);
+  const monthHours = useMemo(
+    () => monthlyEntries.reduce((sum, entry) => sum + Number(entry.hours), 0),
+    [monthlyEntries],
+  );
+  const visibleEntries = useMemo(
+    () => isManager ? entries : entries.filter((entry) => entry.user_id === session?.user.id),
+    [entries, isManager, session?.user.id],
+  );
+  const employeeMonthSummary = useMemo(() => {
+    const totalsByUser = new Map<string, { hours: number; entries: number }>();
+    for (const entry of monthlyEntries) {
+      const total = totalsByUser.get(entry.user_id) ?? { hours: 0, entries: 0 };
+      total.hours += Number(entry.hours);
+      total.entries += 1;
+      totalsByUser.set(entry.user_id, total);
+    }
+    return roster
+      .filter((member) => member.role === "EMPLOYEE")
+      .map((member) => {
+        const total = totalsByUser.get(member.user_id) ?? { hours: 0, entries: 0 };
+        return { member, hours: total.hours, entryCount: total.entries };
       })
-      .reduce((sum, entry) => sum + Number(entry.hours), 0);
-  }, [entries]);
+      .sort(
+        (a, b) =>
+          b.hours - a.hours ||
+          (a.member.full_name ?? a.member.email).localeCompare(b.member.full_name ?? b.member.email, "sk"),
+      );
+  }, [monthlyEntries, roster]);
+  const reportMonth = new Intl.DateTimeFormat("sk-SK", { month: "long", year: "numeric" }).format(new Date());
+  const printMonthlyReport = () => {
+    const previousTitle = document.title;
+    document.title = `${activeMembership?.company.name ?? "Workena"} - ${reportMonth}`;
+    window.addEventListener("afterprint", () => {
+      document.title = previousTitle;
+    }, { once: true });
+    window.print();
+  };
 
   if (!client) {
     return (
@@ -505,10 +551,7 @@ export function App() {
           <Brand />
           <span className="eyebrow">Chýba konfigurácia</span>
           <h1>Prepojte Supabase projekt</h1>
-          <p className="muted">
-            V koreňovom adresári vytvorte súbor <code>.env</code> podľa <code>.env.example</code>, doplňte
-            Supabase URL a anon kľúč a potom aplikáciu znova zostavte.
-          </p>
+          <p className="muted">{supabaseConfigurationError}</p>
         </section>
       </main>
     );
@@ -640,16 +683,59 @@ export function App() {
             <div className="content-page">
               <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setError(""); setPage("entry"); }}><Plus size={16} /> Nový záznam</button></header>
               <section className="stats-grid">
-                <div className="stat-card"><span className="stat-label">Odpracované tento mesiac</span><span className="stat-icon stat-purple"><Clock3 size={17} /></span><strong>{hoursLabel(monthHours)} <small>hod.</small></strong><span className="stat-foot">Všetky záznamy firmy</span></div>
-                <div className="stat-card"><span className="stat-label">Čaká na kontrolu</span><span className="stat-icon stat-amber"><ClipboardList size={17} /></span><strong>{entries.filter((entry) => entry.status === "PENDING").length}</strong><span className="stat-foot">Nevybavené záznamy</span></div>
-                <div className="stat-card"><span className="stat-label">Členovia tímu</span><span className="stat-icon stat-green"><Users size={17} /></span><strong>{roster.length}</strong><span className="stat-foot">Vo firemnom priestore</span></div>
+                <div className="stat-card"><span className="stat-label">Odpracované tento mesiac</span><span className="stat-icon stat-purple"><Clock3 size={17} /></span><strong>{hoursLabel(monthHours)} <small>hod.</small></strong><span className="stat-foot">{isManager ? "Všetci zamestnanci" : "Vaše odpracované hodiny"}</span></div>
+                <div className="stat-card"><span className="stat-label">{isManager ? "Čaká na kontrolu" : "Moje záznamy na kontrolu"}</span><span className="stat-icon stat-amber"><ClipboardList size={17} /></span><strong>{visibleEntries.filter((entry) => entry.status === "PENDING").length}</strong><span className="stat-foot">{isManager ? "Nevybavené záznamy firmy" : "Vaše nevybavené záznamy"}</span></div>
+                <div className="stat-card"><span className="stat-label">{isManager ? "Členovia tímu" : "Moje záznamy tento mesiac"}</span><span className={`stat-icon ${isManager ? "stat-green" : "stat-purple"}`}>{isManager ? <Users size={17} /> : <ClipboardList size={17} />}</span><strong>{isManager ? roster.length : monthlyEntries.length}</strong><span className="stat-foot">{isManager ? "Vo firemnom priestore" : "Zapísané pracovné dni"}</span></div>
               </section>
+              {isManager && <section className="employee-hours-section">
+                <div className="section-title-row"><div><h2><Clock3 size={17} /> Odpracované hodiny podľa zamestnanca</h2><p>Súčet záznamov za {reportMonth}.</p></div><div className="report-heading-actions"><span className="count-pill">{employeeMonthSummary.length} zamestnancov</span><button className="button button-outline button-small no-print" onClick={printMonthlyReport}><Printer size={15} /> Vytlačiť / uložiť PDF</button></div></div>
+                {employeeMonthSummary.length > 0
+                  ? <div className="panel employee-hours-list">{employeeMonthSummary.map(({ member, hours, entryCount }) => {
+                    const expanded = expandedEmployeeId === member.id;
+                    const entriesByDay = new Map<string, WorkEntry[]>();
+                    for (const entry of monthlyEntries) {
+                      if (entry.user_id !== member.user_id) continue;
+                      const day = localDateKey(entry.worked_at);
+                      entriesByDay.set(day, [...(entriesByDay.get(day) ?? []), entry]);
+                    }
+                    return <div className="employee-hours-item" key={member.id}>
+                      <div className="employee-hours-row">
+                        <span className="avatar">{initials(member.full_name || member.email)}</span>
+                        <span className="employee-hours-name"><strong>{member.full_name || member.email}</strong><small>{member.email}</small></span>
+                        <span className="employee-hours-count">Záznamy: {entryCount}</span>
+                        <strong className="employee-hours-total">{hoursLabel(hours)} <small>hod.</small></strong>
+                        <button
+                          className="employee-hours-toggle"
+                          aria-label={`${expanded ? "Skryť" : "Zobraziť"} denné záznamy: ${member.full_name || member.email}`}
+                          aria-expanded={expanded}
+                          aria-controls={`employee-hours-details-${member.id}`}
+                          onClick={() => setExpandedEmployeeId(expanded ? null : member.id)}
+                        >{expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</button>
+                      </div>
+                      {expanded && <div className="employee-hours-details" id={`employee-hours-details-${member.id}`}>
+                        {entryCount === 0
+                          ? <p className="employee-hours-no-entries">Tento mesiac zatiaľ nemá žiadne pracovné záznamy.</p>
+                          : Array.from(entriesByDay.entries()).map(([day, dayEntries]) => {
+                            const dayHours = dayEntries.reduce((sum, entry) => sum + Number(entry.hours), 0);
+                            return <section className="employee-day" key={day}>
+                              <div className="employee-day-heading"><strong>{dateLabel(`${day}T12:00:00`)}</strong><span>{hoursLabel(dayHours)} hod.</span></div>
+                              {dayEntries.map((entry) => <button className="employee-day-entry" key={entry.id} onClick={() => setSelectedId(entry.id)}>
+                                <span><strong>{entry.work_type}</strong><small>{entry.workplace} · {statusName(entry.status)}</small></span>
+                                <strong>{hoursLabel(Number(entry.hours))} h</strong>
+                              </button>)}
+                            </section>;
+                          })}
+                      </div>}
+                    </div>;
+                  })}</div>
+                  : <div className="panel employee-hours-empty">Zatiaľ vo firme nie sú pridaní žiadni zamestnanci.</div>}
+              </section>}
               {notice && <p className="invite-success" role="status">{notice}</p>}
               {error && <p className="form-error" role="alert">{error}</p>}
               <section className="records-section">
-                <div className="section-title-row"><div><h2><ClipboardList size={17} /> Pracovné záznamy</h2><p>Záznamy dostupné členom tejto firmy.</p></div><span className="count-pill">{entries.length} záznamov</span></div>
-                {entries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p><button className="button button-primary button-small" onClick={() => setPage("entry")}><Plus size={15} /> Nový záznam</button></div> : (
-                  <div className="record-list">{entries.map((entry) => {
+                <div className="section-title-row"><div><h2><ClipboardList size={17} /> Pracovné záznamy</h2><p>{isManager ? "Záznamy dostupné členom tejto firmy." : "Vaše pracovné záznamy."}</p></div><span className="count-pill">{visibleEntries.length} záznamov</span></div>
+                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p><button className="button button-primary button-small" onClick={() => setPage("entry")}><Plus size={15} /> Nový záznam</button></div> : (
+                  <div className="record-list">{visibleEntries.map((entry) => {
                     const author = roster.find((member) => member.user_id === entry.user_id);
                     return <article className="record-card" key={entry.id}>
                       <div className="record-date"><strong>{new Intl.DateTimeFormat("sk-SK", { day: "2-digit" }).format(new Date(entry.worked_at))}</strong><span>{new Intl.DateTimeFormat("sk-SK", { month: "short" }).format(new Date(entry.worked_at))}</span><small>{new Date(entry.worked_at).getFullYear()}</small></div>
@@ -666,10 +752,47 @@ export function App() {
             </div>
           )}
         </main>
+        {activeMembership && <nav className="mobile-nav" aria-label="Hlavná navigácia">
+          <button className={`mobile-nav-link ${page === "dashboard" ? "active" : ""}`} aria-current={page === "dashboard" ? "page" : undefined} onClick={() => { setPage("dashboard"); setSelectedId(null); }}>
+            <LayoutDashboard size={19} /><span>Prehľad</span>
+          </button>
+          <button className={`mobile-nav-link ${page === "entry" ? "active" : ""}`} aria-current={page === "entry" ? "page" : undefined} onClick={() => { setEditingEntry(null); setError(""); setPage("entry"); }}>
+            <Plus size={20} /><span>Nový záznam</span>
+          </button>
+          {isManager && <button className={`mobile-nav-link ${page === "team" ? "active" : ""}`} aria-current={page === "team" ? "page" : undefined} onClick={() => setPage("team")}>
+            <Users size={19} /><span>Tím</span>
+          </button>}
+        </nav>}
       </div>
+      {isManager && <section className="print-report">
+        <header className="print-report-header"><span className="brand"><span className="brand-mark">w</span> workena</span><span>Firemný mesačný prehľad</span></header>
+        <h1>Odpracované hodiny — {reportMonth}</h1>
+        <p className="print-report-company">{activeMembership?.company.name} · Vygenerované {dateLabel(new Date().toISOString())}</p>
+        <div className="print-report-total"><span>Spolu za zamestnancov</span><strong>{hoursLabel(employeeMonthSummary.reduce((sum, employee) => sum + employee.hours, 0))} hod.</strong></div>
+        {employeeMonthSummary.map(({ member, hours, entryCount }) => {
+          const memberEntries = monthlyEntries
+            .filter((entry) => entry.user_id === member.user_id)
+            .sort((a, b) => a.worked_at.localeCompare(b.worked_at));
+          const dayGroups = new Map<string, WorkEntry[]>();
+          for (const entry of memberEntries) {
+            const day = localDateKey(entry.worked_at);
+            dayGroups.set(day, [...(dayGroups.get(day) ?? []), entry]);
+          }
+          return <section className="print-employee" key={member.id}>
+            <div className="print-employee-heading"><div><h2>{member.full_name || member.email}</h2><span>{member.email} · {entryCount} záznamov</span></div><strong>{hoursLabel(hours)} hod.</strong></div>
+            {Array.from(dayGroups.entries()).map(([day, dayEntries]) => <div className="print-day" key={day}>
+              <div className="print-day-heading"><strong>{dateLabel(`${day}T12:00:00`)}</strong><strong>{hoursLabel(dayEntries.reduce((sum, entry) => sum + Number(entry.hours), 0))} hod.</strong></div>
+              {dayEntries.map((entry) => <div className="print-entry" key={entry.id}><span><strong>{entry.work_type}</strong><small>{entry.workplace} · {statusName(entry.status)}</small></span><strong>{hoursLabel(Number(entry.hours))} h</strong></div>)}
+            </div>)}
+            {memberEntries.length === 0 && <p className="print-empty">Tento mesiac bez záznamov.</p>}
+          </section>;
+        })}
+        <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
+      </section>}
       {selectedEntry && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedId(null); }}>
         <section className="detail-panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="entry-detail-title">
           <div className="section-title-row"><div><span className="eyebrow">PRACOVNÝ ZÁZNAM</span><h2 id="entry-detail-title">{selectedEntry.work_type}</h2></div><button className="logout-button" aria-label="Zavrieť detail" onClick={() => setSelectedId(null)}><X size={18} /></button></div>
+          {isManager && selectedEntry.status === "PENDING" && <div className="review-banner"><span className="review-banner-icon"><CheckCircle2 size={18} /></span><span><strong>Záznam čaká na vaše schválenie</strong><small>Skontrolujte údaje a potvrďte odpracovaný čas.</small></span></div>}
           <div className="detail-stats"><div><span>Dátum</span><strong>{dateLabel(selectedEntry.worked_at)}</strong></div><div><span>Odpracovaný čas</span><strong>{hoursLabel(Number(selectedEntry.hours))} hod.</strong></div><div><span>Miesto</span><strong>{selectedEntry.workplace}</strong></div></div>
           {selectedEntry.note && <div className="detail-note"><span className="muted-label">POZNÁMKA</span><p>{selectedEntry.note}</p></div>}
           <section className="photo-section">

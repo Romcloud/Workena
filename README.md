@@ -79,6 +79,12 @@ Pred prvým nasadením:
 
 Zostavený `dist/` neobsahuje `.env.local`; workflow vloží premenné pri zostavení. Publishable/anon kľúč je súčasťou verejného JavaScript balíka a bezpečnosť dát zaisťujú RLS politiky Supabase.
 
+Pred nasadením verzie, ktorá oddeľuje pracovné záznamy zamestnancov, spustite v **Supabase → SQL Editor → New query** celý obsah súboru [`supabase/migrations/20261010000100_employee_data_visibility.sql`](./supabase/migrations/20261010000100_employee_data_visibility.sql). Zamestnanci potom uvidia iba vlastné záznamy, členstvo a fotografie; vlastníci a vedúci si zachovajú prístup k údajom celej firmy. Migráciu spustite v každom Supabase projekte iba raz.
+
+Vedúci môže mesačný prehľad vytlačiť alebo uložiť ako PDF cez **Vytlačiť / uložiť PDF** a následnú voľbu **Uložiť ako PDF** v dialógu tlače prehliadača.
+
+Workenu možno pridať na plochu telefónu: v **Safari na iPhone/iPade** vyberte **Zdieľať → Pridať na plochu**, v **Chrome na Androide** otvorte ponuku a vyberte **Nainštalovať aplikáciu** alebo **Pridať na plochu**. Aplikácia používa samostatnú ikonu a zobrazí sa bez panela prehliadača. Offline sa načíta len statická aplikácia; prihlásenie a firemné údaje vyžadujú internet.
+
 ## 5. Nahratie na Webglobe Start
 
 1. Pred zostavením skontrolujte, že `.env` obsahuje **produkčný** `VITE_SUPABASE_URL` a `VITE_SUPABASE_ANON_KEY`. Potom spustite `npm run build`. Zmena týchto hodnôt po zostavení vyžaduje nové zostavenie a nahratie.

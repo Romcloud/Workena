@@ -33,8 +33,18 @@ jobs:
 
       - name: Validate Supabase configuration
         run: |
-          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
-            echo "::error::Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in the repository Actions variables."
+          if ! node -e '
+            const rawUrl = process.env.VITE_SUPABASE_URL?.trim();
+            const anonKey = process.env.VITE_SUPABASE_ANON_KEY?.trim();
+            if (!rawUrl || !anonKey) process.exit(1);
+            try {
+              const url = new URL(rawUrl);
+              if (url.protocol !== "https:" || !url.hostname.endsWith(".supabase.co")) process.exit(1);
+            } catch {
+              process.exit(1);
+            }
+          '; then
+            echo "::error::Set VITE_SUPABASE_URL to the HTTPS Supabase Project URL (for example https://qutvxysezkyawwevxaxe.supabase.co) and set VITE_SUPABASE_ANON_KEY in Settings > Secrets and variables > Actions > Variables."
             exit 1
           fi
         env:
