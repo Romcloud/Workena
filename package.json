@@ -2,35 +2,24 @@
   "name": "workena",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio",
-    "db:seed": "node prisma/seed.mjs"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@auth/prisma-adapter": "^2.8.0",
-    "@aws-sdk/client-s3": "^3.800.0",
-    "@aws-sdk/s3-presigned-post": "^3.800.0",
-    "@prisma/client": "^6.9.0",
+    "@supabase/supabase-js": "^2.57.0",
     "lucide-react": "^0.468.0",
-    "next": "^15.3.3",
-    "next-auth": "5.0.0-beta.25",
-    "zod": "^3.24.2"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
-    "eslint": "^9.24.0",
-    "eslint-config-next": "^15.3.3",
-    "prisma": "^6.9.0",
-    "typescript": "^5.8.3"
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
   }
 }
