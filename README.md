@@ -79,7 +79,9 @@ Pred prvým nasadením:
 
 Zostavený `dist/` neobsahuje `.env.local`; workflow vloží premenné pri zostavení. Publishable/anon kľúč je súčasťou verejného JavaScript balíka a bezpečnosť dát zaisťujú RLS politiky Supabase.
 
-Pred nasadením verzie, ktorá oddeľuje pracovné záznamy zamestnancov, spustite v **Supabase → SQL Editor → New query** celý obsah súboru [`supabase/migrations/20261010000100_employee_data_visibility.sql`](./supabase/migrations/20261010000100_employee_data_visibility.sql). Zamestnanci potom uvidia iba vlastné záznamy, členstvo a fotografie; vlastníci a vedúci si zachovajú prístup k údajom celej firmy. Migráciu spustite v každom Supabase projekte iba raz.
+Pred nasadením aktuálnej verzie spustite v **Supabase → SQL Editor → New query** migrácie v tomto poradí: [`20261010000100_employee_data_visibility.sql`](./supabase/migrations/20261010000100_employee_data_visibility.sql), potom [`20261010000200_employee_history_and_access.sql`](./supabase/migrations/20261010000200_employee_history_and_access.sql). Ak ste už prvú migráciu spustili, spustite iba druhú. Každú migráciu spustite v danom Supabase projekte iba raz; úvodnú schému znovu nespúšťajte. Zamestnanci majú prístup iba k vlastným údajom; odobraté členstvá sa archivujú a vedúci si zachovajú históriu.
+
+Bezplatný plán povoľuje najviac 2 aktívnych zamestnancov. Workena Pro je uvedená za 50 € ročne; online platby ani automatická aktivácia Pro zatiaľ nie sú zapnuté.
 
 Vedúci môže mesačný prehľad vytlačiť alebo uložiť ako PDF cez **Vytlačiť / uložiť PDF** a následnú voľbu **Uložiť ako PDF** v dialógu tlače prehliadača.
 
