@@ -157,6 +157,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .stat-card > strong small { color: #858c83; font: 500 11px var(--sans); letter-spacing: 0; }
 .stat-foot { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: #a0a69e; font-size: 9px; }
 .employee-hours-section { display: grid; gap: 12px; }
+.history-employee-row { flex-wrap: wrap; }
 .report-heading-actions { display: flex; align-items: center; gap: 9px; }
 .employee-hours-list { padding: 0 15px; }
 .employee-hours-item { border-top: 1px solid #f0f2ef; }
@@ -255,6 +256,28 @@ button:disabled { opacity: .65; cursor: wait; }
 .invite-form { display: grid; gap: 13px; }
 .invite-form .field { gap: 5px; }
 .invite-form .button { width: 100%; }
+.entry-photo-picker { display: grid; gap: 12px; padding: 15px; border: 1px dashed #d5e2d5; border-radius: 10px; background: linear-gradient(125deg, #f2f7f0, #fbfcfa); }
+.entry-photo-heading { display: flex; align-items: center; gap: 10px; }
+.entry-photo-heading > span:last-child { display: grid; gap: 2px; }
+.entry-photo-heading strong { color: #364a3a; font-size: 11px; }
+.entry-photo-heading small { color: #858c83; font-size: 9px; }
+.entry-photo-button { position: relative; width: fit-content; overflow: hidden; }
+.entry-photo-button input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.pending-photo-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.pending-photo-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border: 1px solid #e9eee8; border-radius: 7px; background: #fff; }
+.pending-photo-list li > span { display: flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; color: #58685a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.pending-photo-list li > button { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 6px; color: #8a716e; background: #f8f3f2; }
+.history-month-field { min-width: 190px; }
+.history-month-field select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #e1e6e0; border-radius: 7px; color: #343a34; background: #fff; font-size: 12px; text-transform: capitalize; }
+.former-employee-badge { padding: 4px 8px; border-radius: 20px; color: #826c4b; background: #f6f0e6; font-size: 9px; white-space: nowrap; }
+.plan-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; padding: 17px 19px; border-color: #dfe9df; background: linear-gradient(120deg, #f4f8f2, #fff); }
+.plan-card-pro { border-color: #d8e8d9; background: linear-gradient(120deg, #edf6ed, #fff); }
+.plan-card-copy h2 { margin: 3px 0; font: 700 17px var(--serif); }
+.plan-card-copy p, .plan-card-note { margin: 0; color: #7f887e; font-size: 10px; }
+.plan-card-price { display: grid; justify-items: end; }
+.plan-card-price strong { color: #347c60; font: 700 20px var(--serif); }
+.plan-card-price span { color: #879087; font-size: 9px; }
+.plan-card-note { width: 100%; padding-top: 9px; border-top: 1px solid #e6ede5; }
 .domain-notice { margin: -2px 0 14px; padding: 8px 10px; border-radius: 6px; color: #6f755f; background: #f5f5e9; font-size: 10px; }
 .invite-success { overflow-wrap: anywhere; margin: 0; padding: 10px; border-radius: 6px; color: #3f754f; background: #eef6ed; font-size: 11px; }
 .invite-success a { text-decoration: underline; }
@@ -263,6 +286,11 @@ button:disabled { opacity: .65; cursor: wait; }
 .pending-invites small { color: #999f97; white-space: nowrap; }
 .detail-panel { padding: 23px; border: 1px solid #dce8dd; background: linear-gradient(155deg, #f3f8f2 0, #fff 185px); }
 .detail-modal > .section-title-row { padding-bottom: 15px; border-bottom: 1px solid #e4ece3; }
+.detail-modal-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 17px; padding: 4px 0 15px; border-bottom: 1px solid #e4ece3; }
+.detail-modal-title-icon { display: grid; width: 43px; height: 43px; flex: 0 0 auto; place-items: center; border: 1px solid #dce9db; border-radius: 12px; color: var(--green); background: #edf5eb; }
+.detail-modal-title-copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.detail-modal-title-copy h2 { overflow: hidden; margin: 0; font: 700 20px/1.25 var(--serif); letter-spacing: -.4px; text-overflow: ellipsis; }
+.detail-modal-title-copy p { overflow: hidden; margin: 0; color: #818a80; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .detail-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 0 20px; border-bottom: 1px solid #edf0ec; }
 .detail-stats > div { display: grid; gap: 5px; padding: 12px; border: 1px solid #e8eee6; border-radius: 9px; background: #ffffffd9; }
 .detail-stats span { color: #929890; font-size: 10px; }
@@ -370,6 +398,12 @@ button:disabled { opacity: .65; cursor: wait; }
   .record-date { width: 38px; height: 48px; }
   .record-heading h3 { max-width: min(190px, 48vw); }
   .record-meta { gap: 7px; font-size: 9px; }
+  .history-month-field { width: 100%; }
+  .history-employee-row { grid-template-columns: 34px minmax(0, 1fr) auto 30px; }
+  .former-employee-badge { grid-column: 2 / 4; grid-row: 2; width: fit-content; }
+  .history-employee-row .employee-hours-count { grid-column: 2; grid-row: 3; }
+  .history-employee-row .employee-hours-total { grid-column: 3; grid-row: 3; }
+  .history-employee-row .employee-hours-toggle { grid-column: 4; grid-row: 1 / span 3; }
   .record-end { gap: 5px; }
   .record-end .button { padding: 0 8px; }
   .filter-bar { gap: 6px; }
@@ -401,6 +435,9 @@ button:disabled { opacity: .65; cursor: wait; }
   .employee-hours-count { font-size: 8px; }
   .employee-hours-total { font-size: 12px; }
   .employee-hours-toggle { width: 28px; height: 28px; }
+  .plan-card { align-items: flex-start; padding: 14px; }
+  .plan-card-price { margin-left: auto; }
+  .entry-photo-picker { padding: 12px; }
   .photo-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -423,6 +460,8 @@ button:disabled { opacity: .65; cursor: wait; }
 .photo-tile { position: relative; min-width: 0; }
 .photo-tile a { display: block; }
 .photo-remove { position: absolute; top: 5px; right: 5px; display: grid; width: 27px; height: 27px; place-items: center; border: 0; border-radius: 6px; color: #9c4039; background: #fff; box-shadow: 0 1px 6px #0002; }
+.photo-download { position: absolute; top: 5px; right: 37px; display: grid; width: 27px; height: 27px; place-items: center; border: 0; border-radius: 6px; color: #347c60; background: #fff; box-shadow: 0 1px 6px #0002; }
+.photo-download:disabled { cursor: wait; opacity: .6; }
 .upload-label { display: inline-flex; }
 .upload-label input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .detail-modal .form-error { margin: 10px 0; }

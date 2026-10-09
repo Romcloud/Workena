@@ -8,11 +8,14 @@ export type Membership = {
   email: string;
   full_name: string | null;
   role: Role;
+  active: boolean;
+  deactivated_at: string | null;
 };
 
 export type Company = {
   id: string;
   name: string;
+  plan: "FREE" | "PRO";
 };
 
 export type WorkEntry = {
