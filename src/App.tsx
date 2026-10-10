@@ -7,32 +7,47 @@ import {
   ClipboardList,
   ChevronDown,
   ChevronUp,
+  Coffee,
   Download,
   History,
   LayoutDashboard,
   LogOut,
   MapPin,
   Pencil,
+  Play,
   Plus,
   Printer,
   ShieldCheck,
+  Square,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { Company, EntryStatus, Membership, Photo, Role, WorkEntry } from "./lib/types";
+import type { AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "entry" | "team" | "history";
+type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const MAX_PHOTOS = 10;
 const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const WORK_ORDER_PHOTO_BUCKET = "work-order-photos";
+const PAYMENT_IBAN = "SK5811000000002948309028";
+const PAYMENT_BENEFICIARY = "Roman Chlebovec - ROVOLT";
+const PAYMENT_PLAN_DETAILS: Record<PaymentPlan, { name: string; amount: number }> = {
+  BASIC: { name: "Basic", amount: 19 },
+  PRO: { name: "Pro", amount: 39 },
+  TEAM: { name: "Team", amount: 69 },
+};
+
+type WorkOrderPhotoView = WorkOrderPhoto & { url: string };
+type WorkOrderPhotoFiles = Record<string, { BEFORE: File[]; AFTER: File[] }>;
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Požiadavku sa nepodarilo dokončiť. Skúste to znova.";
@@ -60,12 +75,91 @@ function dateTimeLocal(value?: string) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
+function timeLabel(value: string) {
+  return new Intl.DateTimeFormat("sk-SK", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function durationLabel(milliseconds: number) {
+  const totalMinutes = Math.max(0, Math.floor(milliseconds / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours} h ${String(minutes).padStart(2, "0")} min`;
+}
+
+function attendanceDuration(
+  shift: AttendanceShift,
+  breaks: AttendanceBreak[],
+  now: number,
+  rangeStart = Number.NEGATIVE_INFINITY,
+  rangeEnd = Number.POSITIVE_INFINITY,
+) {
+  const shiftStart = Math.max(new Date(shift.started_at).getTime(), rangeStart);
+  const shiftEnd = Math.min(shift.ended_at ? new Date(shift.ended_at).getTime() : now, rangeEnd);
+  const elapsed = Math.max(0, shiftEnd - shiftStart);
+  const breakDuration = breaks.reduce((total, pause) => {
+    const pauseStart = Math.max(new Date(pause.started_at).getTime(), shiftStart);
+    const pauseEnd = Math.min(pause.ended_at ? new Date(pause.ended_at).getTime() : now, shiftEnd);
+    return total + Math.max(0, pauseEnd - pauseStart);
+  }, 0);
+  return Math.max(0, elapsed - breakDuration);
+}
+
 function roleName(role: Role) {
   return role === "OWNER" ? "Vlastník" : role === "MANAGER" ? "Vedúci" : "Zamestnanec";
 }
 
 function statusName(status: EntryStatus) {
   return status === "APPROVED" ? "Schválené" : status === "REJECTED" ? "Vrátené" : "Čaká na kontrolu";
+}
+
+function workOrderStatusName(status: WorkOrderStatus) {
+  return status === "DONE" ? "Hotové" : status === "IN_PROGRESS" ? "Rozpracované" : "Priradené";
+}
+
+function csvCell(value: string | number | null | undefined) {
+  let text = value === null || value === undefined ? "" : String(value);
+  if (/^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function reportMonthKey(value: string | null) {
+  return value ? localDateKey(value).slice(0, 7) : "";
+}
+
+function monthBounds(month: string) {
+  const start = new Date(`${month}-01T00:00:00`);
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+  return { start, end };
+}
+
+const sleep = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+async function geocodeSlovakAddress(address: string) {
+  const params = new URLSearchParams({ format: "jsonv2", limit: "1", countrycodes: "sk", q: address });
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+    headers: { "Accept-Language": "sk" },
+  });
+  if (!response.ok) throw new Error(`Mapové vyhľadávanie zlyhalo (HTTP ${response.status}).`);
+  const results = (await response.json()) as Array<{ lat: string; lon: string; display_name?: string }>;
+  const location = results[0];
+  if (!location) throw new Error(`Adresu „${address}“ sa nepodarilo nájsť na Slovensku.`);
+  return { lat: location.lat, lon: location.lon };
+}
+
+async function openStreetMapRoadDistance(origin: string, destination: string) {
+  const from = await geocodeSlovakAddress(origin);
+  await sleep(1100);
+  const to = await geocodeSlovakAddress(destination);
+  const response = await fetch(
+    `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false&alternatives=false&steps=false`,
+  );
+  if (!response.ok) throw new Error(`Výpočet cestnej trasy zlyhal (HTTP ${response.status}).`);
+  const route = (await response.json()) as { code: string; routes?: Array<{ distance: number }> };
+  if (route.code !== "Ok" || !route.routes?.[0]) {
+    throw new Error("Cestnú trasu sa nepodarilo vypočítať. Skontrolujte adresy alebo zadajte kilometre ručne.");
+  }
+  return Math.round((route.routes[0].distance / 1000) * 100) / 100;
 }
 
 export function App() {
@@ -75,6 +169,25 @@ export function App() {
   const [companyId, setCompanyId] = useState("");
   const [entries, setEntries] = useState<WorkEntry[]>([]);
   const [roster, setRoster] = useState<Membership[]>([]);
+  const [attendanceShifts, setAttendanceShifts] = useState<AttendanceShift[]>([]);
+  const [attendanceBreaks, setAttendanceBreaks] = useState<AttendanceBreak[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [workOrderPhotos, setWorkOrderPhotos] = useState<WorkOrderPhotoView[]>([]);
+  const [pendingWorkOrderPhotos, setPendingWorkOrderPhotos] = useState<WorkOrderPhotoFiles>({});
+  const [vehicleTrips, setVehicleTrips] = useState<VehicleTrip[]>([]);
+  const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
+  const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState<string | null>(null);
+  const [tripMonth, setTripMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
+  const [tripOrigin, setTripOrigin] = useState("");
+  const [tripDestination, setTripDestination] = useState("");
+  const [tripRoundTrip, setTripRoundTrip] = useState(false);
+  const [tripDistance, setTripDistance] = useState("");
+  const [tripMapDistance, setTripMapDistance] = useState<number | null>(null);
+  const [tripDistanceSource, setTripDistanceSource] = useState<"MAP" | "MANUAL" | "MAP_EDITED">("MANUAL");
+  const [tripMapBusy, setTripMapBusy] = useState(false);
+  const [tripNotice, setTripNotice] = useState("");
+  const [attendanceMonth, setAttendanceMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
+  const [attendanceNow, setAttendanceNow] = useState(Date.now());
   const [page, setPage] = useState<Page>("dashboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
@@ -85,11 +198,17 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const attendanceRequest = useRef(0);
+  const workOrderRequest = useRef(0);
+  const workOrdersCompany = useRef("");
+  const workOrderPhotosRequest = useRef(0);
+  const vehicleTripsRequest = useRef(0);
 
   const activeMembership = memberships.find((membership) => membership.company_id === companyId) ?? memberships[0];
   const activeCompanyId = activeMembership?.company_id ?? "";
   const isManager = activeMembership?.role === "OWNER" || activeMembership?.role === "MANAGER";
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? null;
+  const selectedPaymentRequest = paymentRequests.find((request) => request.id === selectedPaymentRequestId) ?? null;
   const profileName =
     session?.user.user_metadata.full_name ??
     session?.user.user_metadata.name ??
@@ -110,6 +229,15 @@ export function App() {
       setCompanyId("");
       setEntries([]);
       setRoster([]);
+      setAttendanceShifts([]);
+      setAttendanceBreaks([]);
+      setWorkOrders([]);
+      setWorkOrderPhotos([]);
+      setPendingWorkOrderPhotos({});
+      setVehicleTrips([]);
+      workOrdersCompany.current = "";
+      workOrderRequest.current += 1;
+      workOrderPhotosRequest.current += 1;
       setSelectedId(null);
       setPage("dashboard");
     });
@@ -136,7 +264,7 @@ export function App() {
     void (async () => {
       const { data: memberRows, error: memberError } = await client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at")
+        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
         .eq("user_id", session.user.id);
       if (!alive) return;
       if (memberError) {
@@ -186,7 +314,7 @@ export function App() {
         .order("worked_at", { ascending: false }),
       client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at")
+        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
         .eq("company_id", activeCompanyId)
         .order("created_at"),
     ]);
@@ -203,9 +331,169 @@ export function App() {
   }, [activeCompanyId, client]);
 
   useEffect(() => {
+    if (!client || !activeCompanyId || activeMembership?.role !== "OWNER") {
+      setPaymentRequests([]);
+      setSelectedPaymentRequestId(null);
+      return;
+    }
+
+    let alive = true;
+    setPaymentRequests([]);
+    setSelectedPaymentRequestId(null);
+    void client
+      .from("payment_requests")
+      .select("id, company_id, plan, amount_eur, variable_symbol, status, created_at, reviewed_at")
+      .eq("company_id", activeCompanyId)
+      .order("created_at", { ascending: false })
+      .then(({ data, error: paymentError }) => {
+        if (!alive) return;
+        if (paymentError) {
+          setError(paymentError.message);
+          return;
+        }
+        const requests = (data ?? []) as PaymentRequest[];
+        setPaymentRequests(requests);
+        setSelectedPaymentRequestId(requests.find((request) => request.status === "PENDING")?.id ?? null);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeCompanyId, activeMembership?.role, client]);
+
+  const createPaymentRequest = async (plan: PaymentPlan) => {
+    if (!client) return;
+    setError("");
+    setBusy(true);
+    const { data, error: paymentError } = await client.rpc("create_payment_request", { p_company_id: activeCompanyId, p_plan: plan });
+    setBusy(false);
+    if (paymentError) {
+      setError(paymentError.message);
+      return;
+    }
+    const request = data as PaymentRequest;
+    setPaymentRequests((current) => [request, ...current.filter((item) => item.id !== request.id)]);
+    setSelectedPaymentRequestId(request.id);
+  };
+
+  const refreshWorkOrders = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    if (workOrdersCompany.current !== activeCompanyId) {
+      workOrdersCompany.current = activeCompanyId;
+      setWorkOrders([]);
+    }
+    const request = ++workOrderRequest.current;
+    const { data, error: workOrdersError } = await client
+      .from("work_orders")
+      .select("*")
+      .eq("company_id", activeCompanyId)
+      .order("due_date", { ascending: true })
+      .order("created_at", { ascending: false });
+    if (request !== workOrderRequest.current) return;
+    if (workOrdersError) throw workOrdersError;
+    setWorkOrders((data ?? []) as WorkOrder[]);
+  }, [activeCompanyId, client]);
+
+  const refreshWorkOrderPhotos = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    const request = ++workOrderPhotosRequest.current;
+    const workOrderIds = workOrders.filter((order) => order.company_id === activeCompanyId).map((order) => order.id);
+    if (!workOrderIds.length) {
+      setWorkOrderPhotos([]);
+      return;
+    }
+    const { data, error: photosError } = await client
+      .from("work_order_photos")
+      .select("*")
+      .in("work_order_id", workOrderIds)
+      .order("created_at");
+    if (request !== workOrderPhotosRequest.current) return;
+    if (photosError) throw photosError;
+    const photoRows = (data ?? []) as WorkOrderPhoto[];
+    const views = await Promise.all(photoRows.map(async (photo) => {
+      const { data: signed, error: signedError } = await client.storage
+        .from(WORK_ORDER_PHOTO_BUCKET)
+        .createSignedUrl(photo.storage_path, 60 * 60);
+      if (signedError) throw signedError;
+      return { ...photo, url: signed.signedUrl };
+    }));
+    if (request === workOrderPhotosRequest.current) setWorkOrderPhotos(views);
+  }, [activeCompanyId, client, workOrders]);
+
+  const refreshVehicleTrips = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    const request = ++vehicleTripsRequest.current;
+    const { data, error: tripsError } = await client
+      .from("vehicle_trips")
+      .select("*")
+      .eq("company_id", activeCompanyId)
+      .order("trip_date", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (request !== vehicleTripsRequest.current) return;
+    if (tripsError) throw tripsError;
+    setVehicleTrips((data ?? []) as VehicleTrip[]);
+  }, [activeCompanyId, client]);
+
+  const refreshAttendance = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    const request = ++attendanceRequest.current;
+    const monthStart = new Date(`${attendanceMonth}-01T00:00:00`);
+    const nextMonthStart = new Date(monthStart);
+    nextMonthStart.setMonth(nextMonthStart.getMonth() + 1);
+    const [{ data: monthRows, error: monthError }, { data: openRows, error: openError }] = await Promise.all([
+      client
+        .from("attendance_shifts")
+        .select("id, company_id, user_id, started_at, ended_at")
+        .eq("company_id", activeCompanyId)
+        .lt("started_at", nextMonthStart.toISOString())
+        .or(`ended_at.is.null,ended_at.gt.${monthStart.toISOString()}`)
+        .order("started_at", { ascending: false }),
+      client
+        .from("attendance_shifts")
+        .select("id, company_id, user_id, started_at, ended_at")
+        .eq("company_id", activeCompanyId)
+        .is("ended_at", null),
+    ]);
+    if (request !== attendanceRequest.current) return;
+    if (monthError || openError) {
+      setError(monthError?.message ?? openError?.message ?? "Dochádzku sa nepodarilo načítať.");
+      return;
+    }
+    const shifts = new Map<string, AttendanceShift>();
+    for (const shift of [...(monthRows ?? []), ...(openRows ?? [])] as AttendanceShift[]) shifts.set(shift.id, shift);
+    const shiftList = [...shifts.values()];
+    let breakRows: AttendanceBreak[] = [];
+    if (shiftList.length) {
+      const { data, error: breakError } = await client
+        .from("attendance_breaks")
+        .select("id, shift_id, started_at, ended_at")
+        .in("shift_id", shiftList.map((shift) => shift.id))
+        .order("started_at");
+      if (request !== attendanceRequest.current) return;
+      if (breakError) {
+        setError(breakError.message);
+        return;
+      }
+      breakRows = (data ?? []) as AttendanceBreak[];
+    }
+    setAttendanceShifts(shiftList);
+    setAttendanceBreaks(breakRows);
+  }, [activeCompanyId, attendanceMonth, client]);
+
+  useEffect(() => {
     if (!client || !activeCompanyId) {
       setEntries([]);
       setRoster([]);
+      setAttendanceShifts([]);
+      setAttendanceBreaks([]);
+      setWorkOrders([]);
+      setWorkOrderPhotos([]);
+      setPendingWorkOrderPhotos({});
+      setVehicleTrips([]);
+      workOrdersCompany.current = "";
+      workOrderRequest.current += 1;
+      workOrderPhotosRequest.current += 1;
+      vehicleTripsRequest.current += 1;
       return;
     }
     let alive = true;
@@ -216,6 +504,27 @@ export function App() {
       alive = false;
     };
   }, [activeCompanyId, client, refreshWorkspace]);
+
+  useEffect(() => {
+    void refreshAttendance().catch((reason: unknown) => setError(errorText(reason)));
+  }, [refreshAttendance]);
+
+  useEffect(() => {
+    void refreshWorkOrders().catch((reason: unknown) => setError(errorText(reason)));
+  }, [refreshWorkOrders]);
+
+  useEffect(() => {
+    void refreshWorkOrderPhotos().catch((reason: unknown) => setError(errorText(reason)));
+  }, [refreshWorkOrderPhotos]);
+
+  useEffect(() => {
+    void refreshVehicleTrips().catch((reason: unknown) => setError(errorText(reason)));
+  }, [refreshVehicleTrips]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setAttendanceNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const loadPhotos = useCallback(
     async (entryId: string) => {
@@ -286,7 +595,7 @@ export function App() {
     else {
       const { data: refreshed, error: refreshError } = await client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at")
+        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
         .eq("user_id", session?.user.id ?? "");
       if (refreshError) setError(refreshError.message);
       else {
@@ -573,6 +882,168 @@ export function App() {
     setBusy(false);
   };
 
+  const createWorkOrder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !activeCompanyId) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: createError } = await client.rpc("create_work_order", {
+        p_company_id: activeCompanyId,
+        p_assignee_id: String(form.get("assignee_id") ?? ""),
+        p_title: String(form.get("title") ?? ""),
+        p_address: String(form.get("address") ?? ""),
+        p_due_date: String(form.get("due_date") ?? ""),
+        p_description: String(form.get("description") ?? ""),
+      });
+      if (createError) {
+        setError(createError.message);
+        return;
+      }
+      await refreshWorkOrders();
+      formElement.reset();
+      setNotice("Zákazka bola priradená pracovníkovi.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateWorkOrder = async (event: FormEvent<HTMLFormElement>, workOrderId: string) => {
+    event.preventDefault();
+    if (!client) return;
+    const form = new FormData(event.currentTarget);
+    const status = String(form.get("status") ?? "IN_PROGRESS");
+    const report = String(form.get("work_report") ?? "").trim();
+    if (status === "DONE" && report.length < 2) {
+      setError("Pred označením zákazky ako hotovej vyplňte výkaz práce.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const pending = pendingWorkOrderPhotos[workOrderId] ?? { BEFORE: [], AFTER: [] };
+      for (const phase of ["BEFORE", "AFTER"] as const) {
+        const uploadError = await uploadWorkOrderPhotos(workOrderId, phase, pending[phase]);
+        if (uploadError) {
+          setError(uploadError);
+          return;
+        }
+      }
+      const { error: updateError } = await client.rpc("submit_work_order_report", {
+        p_work_order_id: workOrderId,
+        p_status: status,
+        p_employee_note: String(form.get("employee_note") ?? ""),
+        p_employee_materials: String(form.get("employee_materials") ?? ""),
+        p_work_report: report,
+      });
+      if (updateError) {
+        setError(updateError.message);
+        return;
+      }
+      await refreshWorkOrders();
+      await refreshWorkOrderPhotos();
+      setPendingWorkOrderPhotos((current) => {
+        const next = { ...current };
+        delete next[workOrderId];
+        return next;
+      });
+      setNotice(status === "DONE" ? "Zákazka a výkaz boli odoslané ako hotové." : "Výkaz zákazky bol uložený.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const chooseWorkOrderPhotos = (
+    workOrder: WorkOrder,
+    phase: "BEFORE" | "AFTER",
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    if (files.some((file) => !PHOTO_TYPES.includes(file.type) || file.size < 1 || file.size > MAX_PHOTO_BYTES)) {
+      setError("Povolené sú JPG, PNG alebo WebP s veľkosťou do 8 MB na fotografiu.");
+      return;
+    }
+    const existingCount = workOrderPhotos.filter((photo) => photo.work_order_id === workOrder.id && photo.phase === phase).length;
+    const pendingCount = pendingWorkOrderPhotos[workOrder.id]?.[phase].length ?? 0;
+    if (existingCount + pendingCount + files.length > MAX_PHOTOS) {
+      setError(`K jednej fáze zákazky môžete pridať najviac ${MAX_PHOTOS} fotografií.`);
+      return;
+    }
+    setError("");
+    setPendingWorkOrderPhotos((current) => ({
+      ...current,
+      [workOrder.id]: {
+        BEFORE: current[workOrder.id]?.BEFORE ?? [],
+        AFTER: current[workOrder.id]?.AFTER ?? [],
+        [phase]: [...(current[workOrder.id]?.[phase] ?? []), ...files],
+      },
+    }));
+  };
+
+  const uploadWorkOrderPhotos = async (
+    workOrderId: string,
+    phase: "BEFORE" | "AFTER",
+    files: File[],
+  ): Promise<string | null> => {
+    if (!client || !activeMembership) return "Firemný priestor nie je dostupný.";
+    const phaseCount = workOrderPhotos.filter((photo) => photo.work_order_id === workOrderId && photo.phase === phase).length;
+    if (phaseCount + files.length > MAX_PHOTOS) return `K jednej fáze zákazky môžete pridať najviac ${MAX_PHOTOS} fotografií.`;
+    const refreshMessage = async () => {
+      try {
+        await refreshWorkOrderPhotos();
+        return "";
+      } catch (reason: unknown) {
+        return ` Nahraté fotografie zostali uložené, ale ich obnovenie zlyhalo: ${errorText(reason)}`;
+      }
+    };
+    for (const file of files) {
+      const extension = file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1];
+      const folder = phase === "BEFORE" ? "before" : "after";
+      const path = `${activeMembership.company_id}/${workOrderId}/${folder}/${crypto.randomUUID()}.${extension}`;
+      const { error: uploadError } = await client.storage.from(WORK_ORDER_PHOTO_BUCKET).upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+      if (uploadError) {
+        const refreshError = await refreshMessage();
+        return `Fotografiu „${file.name}“ sa nepodarilo nahrať: ${uploadError.message}.${refreshError}`;
+      }
+      const { error: metadataError } = await client.rpc("add_work_order_photo", {
+        p_work_order_id: workOrderId,
+        p_phase: phase,
+        p_storage_path: path,
+        p_file_name: file.name.slice(0, 255),
+        p_mime_type: file.type,
+        p_size_bytes: file.size,
+      });
+      if (metadataError) {
+        const { error: cleanupError } = await client.storage.from(WORK_ORDER_PHOTO_BUCKET).remove([path]);
+        const cleanupStatus = cleanupError ? ` Súbor sa nepodarilo odstrániť z úložiska: ${cleanupError.message}` : "";
+        const refreshError = await refreshMessage();
+        return `Fotografiu „${file.name}“ sa nepodarilo pripojiť k zákazke: ${metadataError.message}.${cleanupStatus}${refreshError}`;
+      }
+      setPendingWorkOrderPhotos((current) => ({
+        ...current,
+        [workOrderId]: {
+          BEFORE: current[workOrderId]?.BEFORE ?? [],
+          AFTER: current[workOrderId]?.AFTER ?? [],
+          [phase]: (current[workOrderId]?.[phase] ?? []).filter((pending) => pending !== file),
+        },
+      }));
+    }
+    return null;
+  };
+
   const monthlyEntries = useMemo(() => {
     const now = new Date();
     return entries
@@ -641,6 +1112,144 @@ export function App() {
     for (const entry of entries) months.add(localDateKey(entry.worked_at).slice(0, 7));
     return [...months].sort((a, b) => b.localeCompare(a));
   }, [entries]);
+  const monthAttendanceShifts = useMemo(
+    () => {
+      const monthStart = new Date(`${attendanceMonth}-01T00:00:00`).getTime();
+      const nextMonthStart = new Date(monthStart);
+      nextMonthStart.setMonth(nextMonthStart.getMonth() + 1);
+      return attendanceShifts.filter((shift) =>
+        new Date(shift.started_at).getTime() < nextMonthStart.getTime()
+        && (!shift.ended_at || new Date(shift.ended_at).getTime() > monthStart),
+      );
+    },
+    [attendanceMonth, attendanceShifts],
+  );
+  const attendanceSummary = useMemo(() => {
+    const members = isManager
+      ? roster.filter((member) => member.role === "EMPLOYEE")
+      : roster.filter((member) => member.user_id === session?.user.id);
+    const monthStartDate = new Date(`${attendanceMonth}-01T00:00:00`);
+    const monthEndDate = new Date(monthStartDate);
+    monthEndDate.setMonth(monthEndDate.getMonth() + 1);
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const lastExpectedDate = monthEndDate < todayStart ? monthEndDate : todayStart;
+    return members
+      .map((member) => {
+        const memberShifts = monthAttendanceShifts.filter((shift) => shift.user_id === member.user_id);
+        const joinedDate = new Date(member.created_at);
+        const firstExpectedDate = new Date(
+          Math.max(monthStartDate.getTime(), new Date(joinedDate.getFullYear(), joinedDate.getMonth(), joinedDate.getDate()).getTime()),
+        );
+        const memberEndDate = member.deactivated_at
+          ? new Date(new Date(member.deactivated_at).getFullYear(), new Date(member.deactivated_at).getMonth(), new Date(member.deactivated_at).getDate() + 1)
+          : monthEndDate;
+        const expectedUntil = memberEndDate < lastExpectedDate ? memberEndDate : lastExpectedDate;
+        const totalMilliseconds = memberShifts.reduce(
+          (total, shift) =>
+            total + attendanceDuration(
+              shift,
+              attendanceBreaks.filter((pause) => pause.shift_id === shift.id),
+              attendanceNow,
+              monthStartDate.getTime(),
+              monthEndDate.getTime(),
+            ),
+          0,
+        );
+        let days = 0;
+        const missingDays: string[] = [];
+        for (const date = new Date(firstExpectedDate); date < expectedUntil; date.setDate(date.getDate() + 1)) {
+          const dateStart = date.getTime();
+          const dateEnd = new Date(date);
+          dateEnd.setDate(dateEnd.getDate() + 1);
+          const hasWork = memberShifts.some((shift) =>
+            attendanceDuration(
+              shift,
+              attendanceBreaks.filter((pause) => pause.shift_id === shift.id),
+              attendanceNow,
+              dateStart,
+              dateEnd.getTime(),
+            ) > 0,
+          );
+          if (hasWork) days += 1;
+          else missingDays.push(localDateKey(date.toISOString()));
+        }
+        return { member, shifts: memberShifts, totalMilliseconds, days, missingDays };
+      })
+      .filter(({ member, shifts, missingDays }) => member.active || shifts.length > 0 || missingDays.length > 0)
+      .sort((a, b) => b.totalMilliseconds - a.totalMilliseconds);
+  }, [attendanceBreaks, attendanceNow, isManager, monthAttendanceShifts, roster, session?.user.id]);
+  const monthVehicleTrips = useMemo(
+    () => vehicleTrips.filter((trip) => trip.trip_date.slice(0, 7) === tripMonth),
+    [tripMonth, vehicleTrips],
+  );
+  const reportVehicleTrips = useMemo(
+    () => vehicleTrips.filter((trip) => trip.trip_date.slice(0, 7) === attendanceMonth),
+    [attendanceMonth, vehicleTrips],
+  );
+  const reportWorkOrders = useMemo(
+    () => workOrders.filter((order) => order.work_report?.trim() && reportMonthKey(order.updated_at) === attendanceMonth),
+    [attendanceMonth, workOrders],
+  );
+  const reportEmployeeSummary = useMemo(() => {
+    const members = roster.filter((member) => member.role === "EMPLOYEE");
+    return members
+      .map((member) => {
+        const shifts = attendanceShifts.filter(
+          (shift) => shift.user_id === member.user_id && monthAttendanceShifts.some((monthShift) => monthShift.id === shift.id),
+        );
+        const workedMilliseconds = shifts.reduce(
+          (sum, shift) => sum + attendanceDuration(
+            shift,
+            attendanceBreaks.filter((pause) => pause.shift_id === shift.id),
+            attendanceNow,
+            monthBounds(attendanceMonth).start.getTime(),
+            monthBounds(attendanceMonth).end.getTime(),
+          ),
+          0,
+        );
+        const trips = reportVehicleTrips.filter((trip) => trip.user_id === member.user_id);
+        const orders = reportWorkOrders.filter((order) => order.assignee_id === member.user_id);
+        const missingDayCount = attendanceSummary.find((summary) => summary.member.user_id === member.user_id)?.missingDays.length ?? 0;
+        return {
+          member,
+          workedMilliseconds,
+          shiftCount: shifts.length,
+          missingDayCount,
+          distanceKm: trips.reduce((sum, trip) => sum + Number(trip.distance_km), 0),
+          tripCount: trips.length,
+          reportCount: orders.length,
+        };
+      })
+      .filter(({ member, shiftCount, tripCount, reportCount }) => member.active || shiftCount + tripCount + reportCount > 0)
+      .sort((a, b) => a.member.full_name?.localeCompare(b.member.full_name ?? "", "sk") ?? a.member.email.localeCompare(b.member.email, "sk"));
+  }, [attendanceBreaks, attendanceNow, attendanceMonth, attendanceShifts, attendanceSummary, monthAttendanceShifts, reportVehicleTrips, reportWorkOrders, roster]);
+  const reportOrderSummary = useMemo(() => {
+    const orderIds = new Set([
+      ...reportVehicleTrips.flatMap((trip) => trip.work_order_id ? [trip.work_order_id] : []),
+      ...reportWorkOrders.map((order) => order.id),
+    ]);
+    return [...orderIds].flatMap((id) => {
+      const order = workOrders.find((item) => item.id === id);
+      if (!order) return [];
+      const trips = reportVehicleTrips.filter((trip) => trip.work_order_id === id);
+      return [{
+        order,
+        employee: roster.find((member) => member.user_id === order.assignee_id),
+        distanceKm: trips.reduce((sum, trip) => sum + Number(trip.distance_km), 0),
+        tripCount: trips.length,
+        reportCount: reportWorkOrders.filter((item) => item.id === id).length,
+      }];
+    }).sort((a, b) => b.distanceKm - a.distanceKm || a.order.title.localeCompare(b.order.title, "sk"));
+  }, [reportVehicleTrips, reportWorkOrders, roster, workOrders]);
+  const activeShift = attendanceShifts.find(
+    (shift) => shift.ended_at === null && shift.user_id === session?.user.id,
+  ) ?? null;
+  const activeBreak = activeShift
+    ? attendanceBreaks.find((pause) => pause.shift_id === activeShift.id && pause.ended_at === null) ?? null
+    : null;
+  const attendanceMonthLabel = new Intl.DateTimeFormat("sk-SK", { month: "long", year: "numeric" })
+    .format(new Date(`${attendanceMonth}-15T12:00:00`));
   const historyMonthLabel = new Intl.DateTimeFormat("sk-SK", { month: "long", year: "numeric" })
     .format(new Date(`${historyMonth}-15T12:00:00`));
   const reportMonth = new Intl.DateTimeFormat("sk-SK", { month: "long", year: "numeric" }).format(new Date());
@@ -648,6 +1257,193 @@ export function App() {
     const previousTitle = document.title;
     document.title = `${activeMembership?.company.name ?? "Workena"} - ${reportMonth}`;
     window.addEventListener("afterprint", () => {
+      document.title = previousTitle;
+    }, { once: true });
+    window.print();
+  };
+
+  const attendanceAction = async (
+    action: "start_attendance" | "start_attendance_break" | "end_attendance_break" | "end_attendance",
+  ) => {
+    if (!client || !activeCompanyId) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: actionError } = await client.rpc(action, { p_company_id: activeCompanyId });
+      if (actionError) {
+        setError(actionError.message);
+        return;
+      }
+      await refreshAttendance();
+      setNotice(
+        action === "start_attendance" ? "Pracovná zmena sa začala."
+          : action === "start_attendance_break" ? "Prestávka sa začala."
+            : action === "end_attendance_break" ? "Prestávka sa ukončila."
+              : "Pracovná zmena sa ukončila.",
+      );
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const calculateVehicleTripRoute = async () => {
+    if (!tripOrigin.trim() || !tripDestination.trim()) {
+      setError("Zadajte miesto odchodu aj cieľ jazdy.");
+      return;
+    }
+    setTripMapBusy(true);
+    setError("");
+    setTripNotice("");
+    try {
+      const oneWayKm = await openStreetMapRoadDistance(tripOrigin.trim(), tripDestination.trim());
+      const totalKm = tripRoundTrip ? oneWayKm * 2 : oneWayKm;
+      setTripMapDistance(oneWayKm);
+      setTripDistance(totalKm.toFixed(2));
+      setTripDistanceSource("MAP");
+      setTripNotice(`Vypočítaná ${tripRoundTrip ? "spiatočná" : "jednosmerná"} cestná trasa: ${totalKm.toFixed(2)} km.`);
+    } catch (reason: unknown) {
+      setError(`${errorText(reason)} Zadajte vzdialenosť ručne, ak mapová služba nie je dostupná.`);
+    } finally {
+      setTripMapBusy(false);
+    }
+  };
+
+  const saveVehicleTrip = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !activeCompanyId) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(event.currentTarget);
+    const distance = Number(tripDistance.replace(",", "."));
+    if (!Number.isFinite(distance) || distance <= 0 || distance > 2000) {
+      setError("Zadajte platnú vzdialenosť jazdy od 0,01 do 2 000 km.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setTripNotice("");
+    try {
+      const { error: saveError } = await client.rpc("create_vehicle_trip", {
+        p_company_id: activeCompanyId,
+        p_work_order_id: String(form.get("work_order_id") ?? "") || null,
+        p_trip_date: String(form.get("trip_date") ?? ""),
+        p_origin: tripOrigin.trim(),
+        p_destination: tripDestination.trim(),
+        p_is_round_trip: tripRoundTrip,
+        p_calculated_one_way_km: tripMapDistance,
+        p_distance_km: distance,
+        p_distance_source: tripDistanceSource,
+        p_note: String(form.get("note") ?? ""),
+      });
+      if (saveError) {
+        setError(saveError.message);
+        return;
+      }
+      await refreshVehicleTrips();
+      formElement.reset();
+      setTripOrigin("");
+      setTripDestination("");
+      setTripRoundTrip(false);
+      setTripDistance("");
+      setTripMapDistance(null);
+      setTripDistanceSource("MANUAL");
+      setTripNotice("Jazda bola zaznamenaná.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportMonthlyCsv = () => {
+    const rows: Array<Array<string | number | null | undefined>> = [
+      ["Typ riadka", "Zamestnanec", "Dátum", "Zákazka", "Začiatok", "Koniec", "Odpracovaný čas", "Odkiaľ", "Kam", "Kilometre", "Typ jazdy", "Použitý materiál", "Výkaz práce", "Poznámka", "Chýbajúce dni"],
+    ];
+    const { start, end } = monthBounds(attendanceMonth);
+    for (const shift of monthAttendanceShifts) {
+      const shiftBreaks = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
+      const employee = roster.find((member) => member.user_id === shift.user_id);
+      rows.push([
+        "Dochádzka",
+        employee?.full_name || employee?.email || "",
+        new Date(shift.started_at).toLocaleDateString("sv-SE"),
+        "",
+        timeLabel(shift.started_at),
+        shift.ended_at ? timeLabel(shift.ended_at) : "Prebieha",
+        durationLabel(attendanceDuration(shift, shiftBreaks, attendanceNow, start.getTime(), end.getTime())),
+        "", "", "", "", "", "",
+        shiftBreaks.map((pause) => `Prestávka ${timeLabel(pause.started_at)}–${pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}`).join("; "),
+      ]);
+    }
+    for (const trip of reportVehicleTrips) {
+      const employee = roster.find((member) => member.user_id === trip.user_id);
+      const order = workOrders.find((item) => item.id === trip.work_order_id);
+      rows.push([
+        "Jazda",
+        employee?.full_name || employee?.email || "",
+        trip.trip_date,
+        order?.title ?? "",
+        "", "", "",
+        trip.origin,
+        trip.destination,
+        Number(trip.distance_km).toFixed(2),
+        trip.is_round_trip ? "Spiatočná" : "Jednosmerná",
+        "", "", trip.note ?? "",
+      ]);
+    }
+    for (const order of reportWorkOrders) {
+      const employee = roster.find((member) => member.user_id === order.assignee_id);
+      rows.push([
+        "Výkaz zákazky",
+        employee?.full_name || employee?.email || "",
+        order.report_submitted_at?.slice(0, 10) ?? order.updated_at.slice(0, 10),
+        order.title, "", "", "", "", "", "", "",
+        order.employee_materials ?? "", order.work_report ?? "", order.employee_note ?? "",
+      ]);
+    }
+    for (const summary of reportEmployeeSummary) {
+      rows.push([
+        "Súčet zamestnanca",
+        summary.member.full_name || summary.member.email,
+        attendanceMonth,
+        "", "", "",
+        durationLabel(summary.workedMilliseconds),
+        "", "",
+        summary.distanceKm.toFixed(2),
+        `${summary.shiftCount} zmien, ${summary.tripCount} jázd, ${summary.reportCount} výkazov`,
+        "", "", "",
+        summary.missingDayCount,
+      ]);
+    }
+    for (const summary of reportOrderSummary) {
+      rows.push([
+        "Súčet zákazky",
+        summary.employee?.full_name || summary.employee?.email || "",
+        attendanceMonth,
+        summary.order.title, "", "", "", "", "",
+        summary.distanceKm.toFixed(2),
+        `${summary.tripCount} jázd, ${summary.reportCount} výkazov`, "", "", "",
+      ]);
+    }
+    const content = `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
+    const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const companyFileName = (activeMembership?.company.name ?? "workena").replace(/[^a-z0-9_-]+/gi, "-");
+    link.download = `${companyFileName}-report-${attendanceMonth}.csv`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const printDataReport = () => {
+    const previousTitle = document.title;
+    document.body.classList.add("printing-data-report");
+    document.title = `${activeMembership?.company.name ?? "Workena"} - report ${attendanceMonth}`;
+    window.addEventListener("afterprint", () => {
+      document.body.classList.remove("printing-data-report");
       document.title = previousTitle;
     }, { once: true });
     window.print();
@@ -732,6 +1528,333 @@ export function App() {
     </section>
   );
 
+  const renderAttendance = () => (
+    <section className="content-page">
+      <header className="dashboard-title-row">
+        <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
+      </header>
+      <section className={`panel attendance-clock ${activeShift ? "attendance-clock-running" : ""}`}>
+        <div className="attendance-clock-copy">
+          <span className="eyebrow">DNEŠNÁ ZMENA</span>
+          <h2>{!activeShift ? "Zatiaľ nemáte spustenú zmenu" : activeBreak ? "Práve máte prestávku" : "Pracovná zmena prebieha"}</h2>
+          {activeShift && <p>Začiatok {timeLabel(activeShift.started_at)} · odpracované {durationLabel(attendanceDuration(
+            activeShift,
+            attendanceBreaks.filter((pause) => pause.shift_id === activeShift.id),
+            attendanceNow,
+          ))}</p>}
+          {activeBreak && <p>Prestávka od {timeLabel(activeBreak.started_at)}</p>}
+        </div>
+        {!activeShift
+          ? <button className="button button-primary" disabled={busy} onClick={() => void attendanceAction("start_attendance")}><Play size={16} /> Začať zmenu</button>
+          : activeBreak
+            ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
+            : <div className="attendance-clock-actions">
+              <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
+              <button className="button button-danger" disabled={busy} onClick={() => void attendanceAction("end_attendance")}><Square size={15} /> Ukončiť zmenu</button>
+            </div>}
+      </section>
+      {notice && <p className="invite-success" role="status">{notice}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <section className="records-section attendance-history">
+        <div className="section-title-row">
+          <div><h2><History size={17} /> Mesačný prehľad</h2><p>Súčet skutočne zaznamenaného času vrátane odpočítaných prestávok.</p></div>
+          <div className="attendance-month-switch">
+            <button className="employee-hours-toggle" aria-label="Predchádzajúci mesiac" onClick={() => {
+              const previous = new Date(`${attendanceMonth}-01T12:00:00`);
+              previous.setMonth(previous.getMonth() - 1);
+              setAttendanceMonth(localDateKey(previous).slice(0, 7));
+            }}><ArrowLeft size={16} /></button>
+            <strong>{attendanceMonthLabel}</strong>
+            <button className="employee-hours-toggle" aria-label="Nasledujúci mesiac" disabled={attendanceMonth >= localDateKey(new Date().toISOString()).slice(0, 7)} onClick={() => {
+              const next = new Date(`${attendanceMonth}-01T12:00:00`);
+              next.setMonth(next.getMonth() + 1);
+              setAttendanceMonth(localDateKey(next).slice(0, 7));
+            }}><ArrowRight size={16} /></button>
+          </div>
+        </div>
+        <p className="attendance-schedule-note">Plánovaný pracovný deň je každý deň od pondelka do nedele. Za chýbajúci sa označí iba uplynutý deň bez zaznamenanej práce; dnešok ani dni pred nástupom či po odchode člena sa nepočítajú.</p>
+        {attendanceSummary.length === 0
+          ? <div className="panel employee-hours-empty">Za tento mesiac zatiaľ nie je zaznamenaná dochádzka.</div>
+          : <div className="panel employee-hours-list">{attendanceSummary.map(({ member, shifts, totalMilliseconds, days, missingDays }) => {
+            const expanded = expandedEmployeeId === member.id;
+            const memberLabel = member.full_name || member.email;
+            return <div className="employee-hours-item" key={member.id}>
+              <div className="employee-hours-row history-employee-row">
+                <span className="avatar">{initials(memberLabel)}</span>
+                <span className="employee-hours-name"><strong>{memberLabel}</strong><small>{member.email}</small></span>
+                {!member.active && <span className="former-employee-badge">Bývalý zamestnanec</span>}
+                <span className="employee-hours-count">{days} dní · {shifts.length} zmien</span>
+                <strong className="employee-hours-total">{durationLabel(totalMilliseconds)}</strong>
+                <button className="employee-hours-toggle" aria-label={`${expanded ? "Skryť" : "Zobraziť"} dochádzku: ${memberLabel}`} aria-expanded={expanded} onClick={() => setExpandedEmployeeId(expanded ? null : member.id)}>
+                  {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                </button>
+              </div>
+              <div className="attendance-missing-count">Chýbajúce záznamy: <strong>{missingDays.length} dní</strong></div>
+              {expanded && <div className="employee-hours-details attendance-details">
+                <section className="attendance-missing-list">
+                  <strong>Chýbajúce dni</strong>
+                  {missingDays.length
+                    ? <ul>{missingDays.map((day) => <li key={day}>{dateLabel(`${day}T12:00:00`)}</li>)}</ul>
+                    : <p>Bez chýbajúcich záznamov za uplynulé dni.</p>}
+                </section>
+                {shifts.length === 0
+                  ? <p className="employee-hours-no-entries">Bez dochádzky za tento mesiac.</p>
+                  : [...shifts].sort((a, b) => b.started_at.localeCompare(a.started_at)).map((shift) => {
+                    const shiftBreaks = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
+                    const runningBreak = shiftBreaks.find((pause) => pause.ended_at === null);
+                    return <section className="employee-day attendance-day" key={shift.id}>
+                      <div className="employee-day-heading">
+                        <strong>{dateLabel(shift.started_at)}</strong>
+                        <span>{durationLabel(attendanceDuration(shift, shiftBreaks, attendanceNow))}</span>
+                      </div>
+                      <div className="attendance-shift-line">
+                        <span>{timeLabel(shift.started_at)} – {shift.ended_at ? timeLabel(shift.ended_at) : "prebieha"}</span>
+                        {!shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
+                      </div>
+                      {shiftBreaks.map((pause) => <div className="attendance-break-line" key={pause.id}>
+                        <Coffee size={13} /><span>Prestávka {timeLabel(pause.started_at)} – {pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}</span>
+                      </div>)}
+                    </section>;
+                  })}
+              </div>}
+            </div>;
+          })}</div>}
+      </section>
+    </section>
+  );
+
+  const renderWorkOrders = () => {
+    const employees = roster.filter((member) => member.active && member.role === "EMPLOYEE");
+    const today = localDateKey(new Date().toISOString());
+    return (
+      <section className="content-page">
+        <header className="dashboard-title-row">
+          <div><span className="eyebrow">PRÁCA V TERÉNE</span><h1>Úlohy a zákazky</h1><p>Zadania, termíny a aktuálny stav práce na jednotlivých zákazkách.</p></div>
+        </header>
+        {activeMembership?.role === "OWNER" && <section className="panel work-order-create-panel">
+          <div className="panel-heading"><div><h2><Plus size={17} /> Priradiť novú zákazku</h2><p>Zákazka sa zobrazí priradenému pracovníkovi.</p></div></div>
+          {employees.length === 0
+            ? <p className="muted">Najskôr pridajte do tímu aktívneho zamestnanca.</p>
+            : <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
+              <div className="form-grid">
+                <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Elektroinštalácia rodinného domu" required /></label>
+                <label className="field"><span>Priradiť pracovníkovi</span><select name="assignee_id" defaultValue="" required><option value="" disabled>Vyberte zamestnanca</option>{employees.map((employee) => <option key={employee.user_id} value={employee.user_id}>{employee.full_name || employee.email}</option>)}</select></label>
+                <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
+                <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
+              </div>
+              <label className="field"><span>Opis práce</span><textarea name="description" rows={4} minLength={2} maxLength={4000} placeholder="Rozsah prác, dôležité pokyny a informácie…" required /></label>
+              {error && <p className="form-error" role="alert">{error}</p>}
+              {notice && <p className="invite-success" role="status">{notice}</p>}
+              <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Priraďujem…" : "Priradiť zákazku"}</button></div>
+            </form>}
+        </section>}
+        {activeMembership?.role !== "OWNER" && notice && <p className="invite-success" role="status">{notice}</p>}
+        {activeMembership?.role !== "OWNER" && error && <p className="form-error" role="alert">{error}</p>}
+        <section className="records-section">
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Zoznam zákaziek</h2><p>{isManager ? "Zákazky celej firmy." : "Zákazky priradené vám."}</p></div><span className="count-pill">{workOrders.length} zákaziek</span></div>
+          {workOrders.length === 0
+            ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne zákazky</strong><p>{isManager ? "Priraďte prvú zákazku pracovníkovi." : "Keď vám vlastník priradí zákazku, zobrazí sa tu."}</p></div>
+            : <div className="work-order-list">{workOrders.map((workOrder) => {
+              const assignee = roster.find((member) => member.user_id === workOrder.assignee_id);
+              const canUpdate = !isManager && workOrder.assignee_id === session?.user.id;
+              const overdue = workOrder.status !== "DONE" && workOrder.due_date < today;
+              return <article className="panel work-order-card" key={workOrder.id}>
+                <div className="work-order-heading">
+                  <div><span className="eyebrow">ZÁKAZKA</span><h2>{workOrder.title}</h2></div>
+                  <span className={`status-pill work-order-status work-order-${workOrder.status.toLowerCase()}`}>{workOrderStatusName(workOrder.status)}</span>
+                </div>
+                <div className="work-order-meta">
+                  <span><MapPin size={14} />{workOrder.address}</span>
+                  <span className={overdue ? "work-order-overdue" : ""}><Clock3 size={14} />Termín: {dateLabel(`${workOrder.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
+                  <span><Users size={14} />{assignee?.full_name || assignee?.email || "Bývalý zamestnanec"}</span>
+                </div>
+                <p className="work-order-description">{workOrder.description}</p>
+                {(workOrder.employee_materials || workOrder.work_report || workOrder.employee_note) && <div className="work-order-report">
+                  <strong>Výkaz zákazky</strong>
+                  {workOrder.report_submitted_at && <small>Odoslaný {dateLabel(workOrder.report_submitted_at)}</small>}
+                  {workOrder.employee_materials && <p><b>Použitý materiál:</b> {workOrder.employee_materials}</p>}
+                  {workOrder.work_report && <p><b>Opis vykonanej práce:</b> {workOrder.work_report}</p>}
+                  {workOrder.employee_note && <p><b>Poznámka:</b> {workOrder.employee_note}</p>}
+                </div>}
+                <div className="work-order-photo-groups">
+                  {(["BEFORE", "AFTER"] as const).map((phase) => {
+                    const phasePhotos = workOrderPhotos.filter((photo) => photo.work_order_id === workOrder.id && photo.phase === phase);
+                    const pending = pendingWorkOrderPhotos[workOrder.id]?.[phase] ?? [];
+                    return <section className="work-order-photo-group" key={phase}>
+                      <div className="work-order-photo-heading">
+                        <strong>{phase === "BEFORE" ? "Pred prácou" : "Po práci"}</strong>
+                        <span>{phasePhotos.length}{pending.length ? ` + ${pending.length} čaká na nahratie` : ""} / {MAX_PHOTOS}</span>
+                      </div>
+                      {phasePhotos.length > 0 && <div className="work-order-photo-grid">{phasePhotos.map((photo) => <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id} aria-label={`Otvoriť fotografiu ${photo.file_name}`}>
+                        <img src={photo.url} alt={`${phase === "BEFORE" ? "Pred prácou" : "Po práci"}: ${photo.file_name}`} loading="lazy" />
+                        <span>{photo.file_name}</span>
+                      </a>)}</div>}
+                      {pending.length > 0 && <ul className="pending-photo-list">{pending.map((file, index) => <li key={`${file.name}-${file.size}-${index}`}>
+                        <span><Camera size={14} />{file.name}</span>
+                        <button type="button" aria-label={`Odstrániť ${file.name}`} onClick={() => setPendingWorkOrderPhotos((current) => ({
+                          ...current,
+                          [workOrder.id]: {
+                            BEFORE: current[workOrder.id]?.BEFORE ?? [],
+                            AFTER: current[workOrder.id]?.AFTER ?? [],
+                            [phase]: (current[workOrder.id]?.[phase] ?? []).filter((_, fileIndex) => fileIndex !== index),
+                          },
+                        }))}><X size={15} /></button>
+                      </li>)}</ul>}
+                      {canUpdate && <label className="button button-outline button-small entry-photo-button"><Plus size={14} /> Pridať fotografie<input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={busy || phasePhotos.length + pending.length >= MAX_PHOTOS} onChange={(event) => chooseWorkOrderPhotos(workOrder, phase, event)} /></label>}
+                    </section>;
+                  })}
+                </div>
+                {canUpdate && <form className="work-order-update" onSubmit={(event) => void updateWorkOrder(event, workOrder.id)}>
+                  <div className="work-order-update-fields">
+                    <label className="field"><span>Stav zákazky</span><select name="status" defaultValue={workOrder.status === "DONE" ? "DONE" : "IN_PROGRESS"}><option value="IN_PROGRESS">Rozpracované</option><option value="DONE">Hotové</option></select></label>
+                    <label className="field"><span>Použitý materiál <small>voliteľné</small></span><textarea name="employee_materials" rows={2} maxLength={4000} defaultValue={workOrder.employee_materials ?? ""} placeholder="Materiály a množstvá…" /></label>
+                    <label className="field"><span>Výkaz vykonanej práce <small>povinný pri dokončení</small></span><textarea name="work_report" rows={3} maxLength={4000} defaultValue={workOrder.work_report ?? ""} placeholder="Popíšte vykonané práce a výsledok…" /></label>
+                    <label className="field"><span>Poznámka pre vlastníka <small>voliteľné</small></span><textarea name="employee_note" rows={2} maxLength={2000} defaultValue={workOrder.employee_note ?? ""} placeholder="Doplňujúca informácia k priebehu…" /></label>
+                  </div>
+                  {error && <p className="form-error" role="alert">{error}</p>}
+                  <div className="form-actions"><button className="button button-primary button-small" disabled={busy}>{busy ? "Ukladám…" : workOrder.status === "DONE" ? "Uložiť výkaz" : "Uložiť výkaz zákazky"}</button></div>
+                </form>}
+              </article>;
+            })}</div>}
+        </section>
+      </section>
+    );
+  };
+
+  const renderTrips = () => (
+    <section className="content-page">
+      <header className="dashboard-title-row">
+        <div><span className="eyebrow">CESTOVNÝ VÝKAZ</span><h1>Výkaz jázd</h1><p>Vzdialenosť vypočítaná po cestách na Slovensku; kilometre možno upraviť ručne.</p></div>
+      </header>
+      <section className="panel trip-create-panel">
+        <div className="panel-heading"><div><h2><MapPin size={17} /> Zaznamenať jazdu</h2><p>Vypočítame cestnú vzdialenosť z miesta odchodu a cieľa.</p></div></div>
+        <form className="form-stack trip-form" onSubmit={(event) => void saveVehicleTrip(event)}>
+          <div className="form-grid">
+            <label className="field"><span>Dátum jazdy</span><input type="date" name="trip_date" defaultValue={localDateKey(new Date().toISOString())} required /></label>
+            <label className="field"><span>Priradiť k zákazke <small>voliteľné</small></span><select name="work_order_id" defaultValue="" onChange={(event) => {
+              const order = workOrders.find((item) => item.id === event.target.value);
+              if (order) {
+                setTripDestination(order.address);
+                setTripMapDistance(null);
+                setTripDistanceSource("MANUAL");
+                setTripDistance("");
+                setTripNotice("");
+              }
+            }}><option value="">Bez zákazky</option>{workOrders.filter((order) => order.assignee_id === session?.user.id).map((order) => <option key={order.id} value={order.id}>{order.title}</option>)}</select></label>
+            <label className="field"><span>Miesto odchodu</span><input value={tripOrigin} onChange={(event) => {
+              setTripOrigin(event.target.value);
+              setTripMapDistance(null);
+              setTripDistanceSource("MANUAL");
+              setTripDistance("");
+              setTripNotice("");
+            }} disabled={tripMapBusy} minLength={2} maxLength={250} placeholder="napr. Hlavná 1, Bratislava" required /></label>
+            <label className="field"><span>Cieľ jazdy</span><input value={tripDestination} onChange={(event) => {
+              setTripDestination(event.target.value);
+              setTripMapDistance(null);
+              setTripDistanceSource("MANUAL");
+              setTripDistance("");
+              setTripNotice("");
+            }} disabled={tripMapBusy} minLength={2} maxLength={250} placeholder="napr. Námestie 1, Trnava" required /></label>
+          </div>
+          <label className="checkbox-line trip-roundtrip"><input type="checkbox" checked={tripRoundTrip} onChange={(event) => {
+            const nextRoundTrip = event.target.checked;
+            setTripRoundTrip(nextRoundTrip);
+            if (tripMapDistance !== null && (tripDistanceSource === "MAP" || tripDistanceSource === "MAP_EDITED")) {
+              setTripDistance((nextRoundTrip ? tripMapDistance * 2 : tripMapDistance).toFixed(2));
+              setTripDistanceSource("MAP");
+            }
+          }} disabled={tripMapBusy} /><span>Spiatočná jazda (návrat na miesto odchodu)</span></label>
+          <div className="trip-map-controls">
+            <button type="button" className="button button-outline" disabled={tripMapBusy || busy} onClick={() => void calculateVehicleTripRoute()}>
+              <MapPin size={15} />{tripMapBusy ? "Počítam trasu…" : "Vypočítať trasu cez OpenStreetMap"}
+            </button>
+            {tripMapDistance !== null && <span>Jednosmerne podľa mapy: {hoursLabel(tripMapDistance)} km</span>}
+          </div>
+          <div className="form-grid">
+            <label className="field"><span>Celková vzdialenosť v km</span><input type="number" min="0.01" max="2000" step="0.01" value={tripDistance} onChange={(event) => {
+              setTripDistance(event.target.value);
+              setTripDistanceSource(tripMapDistance === null ? "MANUAL" : "MAP_EDITED");
+            }} placeholder="Vypočítajte alebo zadajte ručne" required /></label>
+            <label className="field"><span>Poznámka <small>voliteľné</small></span><input name="note" maxLength={2000} placeholder="Účel jazdy alebo doplňujúce informácie" /></label>
+          </div>
+          <p className="trip-map-notice">Pri výpočte odošleme zadané adresy službám OpenStreetMap Nominatim a OSRM na vyhľadanie miesta a cestnej trasy. Ak mapa zlyhá, kilometre možno zadať alebo opraviť ručne. Mapové údaje: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>.</p>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          {tripNotice && <p className="invite-success" role="status">{tripNotice}</p>}
+          <div className="form-actions"><button className="button button-primary" disabled={busy || tripMapBusy}><Plus size={15} />{busy ? "Ukladám…" : "Uložiť jazdu"}</button></div>
+        </form>
+      </section>
+      <section className="records-section">
+        <div className="section-title-row">
+          <div><h2><Clock3 size={17} /> Moje jazdy</h2><p>Spolu za mesiac: <strong>{hoursLabel(monthVehicleTrips.reduce((sum, trip) => sum + Number(trip.distance_km), 0))} km</strong></p></div>
+          <label className="field history-month-field"><span>Mesiac</span><input type="month" value={tripMonth} max={localDateKey(new Date().toISOString()).slice(0, 7)} onChange={(event) => setTripMonth(event.target.value)} /></label>
+        </div>
+        {monthVehicleTrips.length === 0
+          ? <div className="panel empty-state"><span className="soft-icon"><MapPin size={19} /></span><strong>Za tento mesiac tu nie sú jazdy</strong><p>Pridajte prvú jazdu na cestovný výkaz.</p></div>
+          : <div className="trip-list">{monthVehicleTrips.map((trip) => {
+            const order = workOrders.find((item) => item.id === trip.work_order_id);
+            return <article className="panel trip-card" key={trip.id}>
+              <div className="trip-card-heading"><strong>{dateLabel(`${trip.trip_date}T12:00:00`)}</strong><strong>{hoursLabel(Number(trip.distance_km))} km</strong></div>
+              <p>{trip.origin} <ArrowRight size={14} /> {trip.destination}</p>
+              <div className="trip-card-footer"><span>{trip.is_round_trip ? "Spiatočná jazda" : "Jednosmerná jazda"} · {trip.distance_source === "MANUAL" ? "Zadané ručne" : trip.distance_source === "MAP_EDITED" ? "Mapa · ručne upravené" : "OpenStreetMap"}</span>{order && <span>{order.title}</span>}</div>
+              {trip.note && <small>{trip.note}</small>}
+            </article>;
+          })}</div>}
+      </section>
+    </section>
+  );
+
+  const renderReports = () => {
+    const attendanceHours = reportEmployeeSummary.reduce((sum, employee) => sum + employee.workedMilliseconds, 0);
+    const mileageTotal = reportEmployeeSummary.reduce((sum, employee) => sum + employee.distanceKm, 0);
+    return (
+      <section className="content-page">
+        <header className="dashboard-title-row">
+          <div><span className="eyebrow">MESAČNÝ REPORT</span><h1>Exporty a reporty</h1><p>Dochádzka, jazdy a výkazy podľa zamestnanca a zákazky.</p></div>
+          <div className="report-heading-actions">
+            <button className="button button-outline" onClick={exportMonthlyCsv}><Download size={16} /> Exportovať do Excelu (CSV)</button>
+            <button className="button button-primary" onClick={printDataReport}><Printer size={16} /> Exportovať PDF</button>
+          </div>
+        </header>
+        <section className="report-filter panel">
+          <label className="field"><span>Obdobie reportu</span><input type="month" value={attendanceMonth} max={localDateKey(new Date().toISOString()).slice(0, 7)} onChange={(event) => setAttendanceMonth(event.target.value)} /></label>
+          <div><small>Odpracovaný čas</small><strong>{durationLabel(attendanceHours)}</strong></div>
+          <div><small>Najazdené kilometre</small><strong>{hoursLabel(mileageTotal)} km</strong></div>
+          <div><small>Výkazy zákaziek</small><strong>{reportWorkOrders.length}</strong></div>
+        </section>
+        <section className="records-section">
+          <div className="section-title-row"><div><h2><Users size={17} /> Súhrn podľa zamestnanca</h2><p>{attendanceMonthLabel}</p></div><span className="count-pill">{reportEmployeeSummary.length} zamestnancov</span></div>
+          {reportEmployeeSummary.length
+            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zamestnanec</th><th>Zmeny</th><th>Odpracovaný čas</th><th>Chýbajúce dni</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportEmployeeSummary.map((summary) => <tr key={summary.member.id}>
+              <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.missingDayCount}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+            </tr>)}</tbody></table></div>
+            : <div className="panel employee-hours-empty">Za vybraný mesiac nie sú údaje.</div>}
+        </section>
+        <section className="records-section">
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Súhrn podľa zákazky</h2><p>Kilometre viazané na zákazku a odovzdané výkazy.</p></div><span className="count-pill">{reportOrderSummary.length} zákaziek</span></div>
+          {reportOrderSummary.length
+            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zákazka</th><th>Pracovník</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportOrderSummary.map((summary) => <tr key={summary.order.id}>
+              <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+            </tr>)}</tbody></table></div>
+            : <div className="panel employee-hours-empty">V tomto mesiaci nie sú zákazky s výkazom ani priradenými jazdami.</div>}
+        </section>
+        <section className="records-section">
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Výkazy odovzdané v mesiaci</h2><p>Materiál a vykonaná práca zákaziek.</p></div><span className="count-pill">{reportWorkOrders.length} výkazov</span></div>
+          {reportWorkOrders.length
+            ? <div className="work-order-list">{reportWorkOrders.map((order) => {
+              const employee = roster.find((member) => member.user_id === order.assignee_id);
+              return <article className="panel work-order-report-card" key={order.id}>
+                <div><strong>{order.title}</strong><small>{employee?.full_name || employee?.email || "Bývalý zamestnanec"} · {dateLabel(order.updated_at)}</small></div>
+                {order.employee_materials && <p><b>Použitý materiál:</b> {order.employee_materials}</p>}
+                {order.work_report && <p><b>Výkaz práce:</b> {order.work_report}</p>}
+                {order.employee_note && <p><b>Poznámka:</b> {order.employee_note}</p>}
+              </article>;
+            })}</div>
+            : <div className="panel employee-hours-empty">Za tento mesiac neboli odovzdané pracovné výkazy.</div>}
+        </section>
+      </section>
+    );
+  };
+
   const renderTeam = () => (
     <section className="content-page">
       <header className="dashboard-title-row"><div><span className="eyebrow">FIREMNÝ PRIESTOR</span><h1>Tím</h1><p>Správa členov a ich prístupu k údajom firmy.</p></div></header>
@@ -756,8 +1879,64 @@ export function App() {
       </div>
       {activeMembership?.role === "OWNER" && <section className={`panel plan-card ${activeMembership.company.plan === "PRO" ? "plan-card-pro" : ""}`}>
         <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan === "PRO" ? "AKTÍVNY PLÁN" : "BEZPLATNÝ PLÁN"}</span><h2>{activeMembership.company.plan === "PRO" ? "Workena Pro" : "Workena Free"}</h2><p>{activeMembership.company.plan === "PRO" ? "Firemný priestor používa plán Pro." : `Používate ${roster.filter((member) => member.active && member.role === "EMPLOYEE").length} z 2 zamestnaneckých miest.`}</p></div>
-        <div className="plan-card-price"><strong>{activeMembership.company.plan === "PRO" ? "Pro" : "50 €"}</strong><span>{activeMembership.company.plan === "PRO" ? "aktívny" : "za rok · Pro"}</span></div>
-        {activeMembership.company.plan === "FREE" && <p className="plan-card-note">Bezplatný plán má limit 2 zamestnancov. Online platby zatiaľ nie sú zapnuté; pre aktiváciu Pro kontaktujte správcu Workena.</p>}
+        <div className="plan-card-price"><strong>{activeMembership.company.plan === "PRO" ? "Pro" : "Free"}</strong><span>{activeMembership.company.plan === "PRO" ? "stav účtu" : "aktuálny účet"}</span></div>
+        <p className="plan-card-note">Toto je aktuálny technický stav účtu. Platené predplatné ani automatická aktivácia zatiaľ nie sú zapnuté.</p>
+      </section>}
+      {activeMembership?.role === "OWNER" && <section className="pricing-proposal">
+        <header className="pricing-proposal-heading">
+          <div><span className="eyebrow">NA TESTOVANIE SO ZÁKAZNÍKMI</span><h2>Návrh balíkov a cien</h2></div>
+          <p>Navrhované ceny na overenie záujmu. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné.</p>
+        </header>
+        <div className="pricing-proposal-grid">
+          <article className="panel pricing-proposal-card">
+            <div><span className="pricing-proposal-name">Basic</span><strong>19 €<small> / mes.</small></strong></div>
+            <p>Zamestnanci, úlohy a základná evidencia.</p>
+            <button className="button button-outline button-small" onClick={() => void createPaymentRequest("BASIC")} disabled={busy}>Zobraziť platobné údaje</button>
+          </article>
+          <article className="panel pricing-proposal-card pricing-proposal-featured">
+            <div><span className="pricing-proposal-name">Pro</span><strong>39 €<small> / mes.</small></strong></div>
+            <p>Dochádzka, výkazy, exporty a reporty.</p>
+            <button className="button button-outline button-small" onClick={() => void createPaymentRequest("PRO")} disabled={busy}>Zobraziť platobné údaje</button>
+          </article>
+          <article className="panel pricing-proposal-card">
+            <div><span className="pricing-proposal-name">Team</span><strong>69 €<small> / mes.</small></strong></div>
+            <p>Viac tímov, zákazky, pokročilé reporty a oprávnenia.</p>
+            <button className="button button-outline button-small" onClick={() => void createPaymentRequest("TEAM")} disabled={busy}>Zobraziť platobné údaje</button>
+          </article>
+        </div>
+        {selectedPaymentRequest && <section className="panel payment-instructions">
+          <div className="payment-instructions-copy">
+            <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name.toUpperCase()}</span>
+            <h3>Dokončite platbu prevodom</h3>
+            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii.</p>
+            <dl>
+              <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
+              <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
+              <div><dt>Suma za 1 mesiac</dt><dd>{Number(selectedPaymentRequest.amount_eur).toFixed(2).replace(".", ",")} €</dd></div>
+              <div><dt>Variabilný symbol</dt><dd>{selectedPaymentRequest.variable_symbol}</dd></div>
+              <div><dt>Správa</dt><dd>Workena {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name}</dd></div>
+            </dl>
+            <p className="payment-pending-note">Ide o jednorazový prevod za jeden mesiac, nie o opakované strhávanie. Stav: {selectedPaymentRequest.status === "PENDING" ? "Čaká na ručné potvrdenie správcom Workena." : selectedPaymentRequest.status === "CONFIRMED" ? "Platba bola potvrdená správcom Workena." : "Žiadosť bola zamietnutá."} Vytvorenie QR kódu ani odoslanie prevodu automaticky nemení váš plán.</p>
+          </div>
+          <div className="payment-qr">
+            <QRCodeSVG
+              value={`SPD*1.0*ACC:${PAYMENT_IBAN}*AM:${Number(selectedPaymentRequest.amount_eur).toFixed(2)}*CC:EUR*X-VS:${selectedPaymentRequest.variable_symbol}*MSG:Workena ${PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name}*RN:${PAYMENT_BENEFICIARY}`}
+              size={192}
+              level="M"
+              marginSize={4}
+              title="QR platba Workena"
+            />
+            <span>QR platba (SPAYD)</span>
+          </div>
+        </section>}
+        {paymentRequests.length > 0 && <div className="payment-request-list" aria-label="Žiadosti o platbu">
+          <strong>Žiadosti o platbu</strong>
+          {paymentRequests.map((request) => <button key={request.id} className={`payment-request-item ${request.id === selectedPaymentRequestId ? "active" : ""}`} onClick={() => setSelectedPaymentRequestId(request.id)}>
+            <span>{PAYMENT_PLAN_DETAILS[request.plan].name} · VS {request.variable_symbol}</span>
+            <span>{request.status === "PENDING" ? "Čaká na potvrdenie" : request.status === "CONFIRMED" ? "Potvrdená" : "Zamietnutá"}</span>
+          </button>)}
+        </div>}
+        <p className="pricing-proposal-note">Ceny sú naďalej návrhom na testovanie, nie aktívnou ponukou. Platbu overuje správca Workena ručne; automatická aktivácia predplatného nie je zapnutá.</p>
       </section>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>
@@ -826,7 +2005,11 @@ export function App() {
         <span className="nav-caption">PRACOVNÝ PRIESTOR</span>
         <nav className="side-nav">
           <button className={`nav-link ${page === "dashboard" ? "active" : ""}`} onClick={() => { setPage("dashboard"); setSelectedId(null); }}><LayoutDashboard size={18} /> Prehľad</button>
+          <button className={`nav-link ${page === "attendance" ? "active" : ""}`} onClick={() => { setPage("attendance"); setError(""); }}><Clock3 size={18} /> Dochádzka</button>
+          <button className={`nav-link ${page === "workOrders" ? "active" : ""}`} onClick={() => { setPage("workOrders"); setError(""); setNotice(""); }}><ClipboardList size={18} /> Zákazky</button>
+          <button className={`nav-link ${page === "trips" ? "active" : ""}`} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}><MapPin size={18} /> Výkaz jázd</button>
           <button className={`nav-link ${page === "entry" ? "active" : ""}`} onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}><ClipboardList size={18} /> Nový záznam</button>
+          {isManager && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
           {isManager && <button className={`nav-link ${page === "history" ? "active" : ""}`} onClick={() => setPage("history")}><History size={18} /> História</button>}
         </nav>
@@ -848,7 +2031,7 @@ export function App() {
                 <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
               </form>
             </section>
-          ) : page === "entry" ? renderEntryForm() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : (
+          ) : page === "entry" ? renderEntryForm() : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : (
             <div className="content-page">
               <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}><Plus size={16} /> Nový záznam</button></header>
               <section className="stats-grid">
@@ -925,6 +2108,15 @@ export function App() {
           <button className={`mobile-nav-link ${page === "dashboard" ? "active" : ""}`} aria-current={page === "dashboard" ? "page" : undefined} onClick={() => { setPage("dashboard"); setSelectedId(null); }}>
             <LayoutDashboard size={19} /><span>Prehľad</span>
           </button>
+          <button className={`mobile-nav-link ${page === "attendance" ? "active" : ""}`} aria-current={page === "attendance" ? "page" : undefined} onClick={() => { setPage("attendance"); setError(""); }}>
+            <Clock3 size={19} /><span>Dochádzka</span>
+          </button>
+          <button className={`mobile-nav-link ${page === "workOrders" ? "active" : ""}`} aria-current={page === "workOrders" ? "page" : undefined} onClick={() => { setPage("workOrders"); setError(""); setNotice(""); }}>
+            <ClipboardList size={19} /><span>Zákazky</span>
+          </button>
+          <button className={`mobile-nav-link ${page === "trips" ? "active" : ""}`} aria-current={page === "trips" ? "page" : undefined} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}>
+            <MapPin size={19} /><span>Jazdy</span>
+          </button>
           <button className={`mobile-nav-link ${page === "entry" ? "active" : ""}`} aria-current={page === "entry" ? "page" : undefined} onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}>
             <Plus size={20} /><span>Nový záznam</span>
           </button>
@@ -933,6 +2125,9 @@ export function App() {
           </button>}
           {isManager && <button className={`mobile-nav-link ${page === "history" ? "active" : ""}`} aria-current={page === "history" ? "page" : undefined} onClick={() => setPage("history")}>
             <History size={19} /><span>História</span>
+          </button>}
+          {isManager && <button className={`mobile-nav-link ${page === "reports" ? "active" : ""}`} aria-current={page === "reports" ? "page" : undefined} onClick={() => setPage("reports")}>
+            <Download size={19} /><span>Reporty</span>
           </button>}
         </nav>}
       </div>
@@ -959,6 +2154,47 @@ export function App() {
             {memberEntries.length === 0 && <p className="print-empty">Tento mesiac bez záznamov.</p>}
           </section>;
         })}
+        <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
+      </section>}
+      {isManager && <section className="print-report data-print-report">
+        <header className="print-report-header"><span className="brand"><span className="brand-mark">w</span> workena</span><span>Dochádzka, jazdy a výkazy</span></header>
+        <h1>Mesačný report — {attendanceMonthLabel}</h1>
+        <p className="print-report-company">{activeMembership?.company.name} · Vygenerované {dateLabel(new Date().toISOString())}</p>
+        <div className="data-print-total">
+          <strong>Odpracovaný čas: {durationLabel(reportEmployeeSummary.reduce((sum, employee) => sum + employee.workedMilliseconds, 0))}</strong>
+          <strong>Najazdené: {hoursLabel(reportEmployeeSummary.reduce((sum, employee) => sum + employee.distanceKm, 0))} km</strong>
+          <strong>Výkazy: {reportWorkOrders.length}</strong>
+        </div>
+        <h2>Súhrn podľa zamestnanca</h2>
+        <table><thead><tr><th>Zamestnanec</th><th>Zmeny</th><th>Čas</th><th>Chýbajúce dni</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportEmployeeSummary.map((summary) => <tr key={summary.member.id}>
+          <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.missingDayCount}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+        </tr>)}</tbody></table>
+        <h2>Súhrn podľa zákazky</h2>
+        <table><thead><tr><th>Zákazka</th><th>Pracovník</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportOrderSummary.map((summary) => <tr key={summary.order.id}>
+          <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+        </tr>)}</tbody></table>
+        <h2>Dochádzka</h2>
+        <table><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Od – do</th><th>Prestávky</th><th>Čistý čas</th></tr></thead><tbody>{monthAttendanceShifts.map((shift) => {
+          const member = roster.find((item) => item.user_id === shift.user_id);
+          const pauses = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
+          return <tr key={shift.id}><td>{member?.full_name || member?.email || ""}</td><td>{dateLabel(shift.started_at)}</td><td>{timeLabel(shift.started_at)} – {shift.ended_at ? timeLabel(shift.ended_at) : "Prebieha"}</td><td>{pauses.map((pause) => `${timeLabel(pause.started_at)}–${pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}`).join(", ")}</td><td>{durationLabel(attendanceDuration(shift, pauses, attendanceNow, monthBounds(attendanceMonth).start.getTime(), monthBounds(attendanceMonth).end.getTime()))}</td></tr>;
+        })}</tbody></table>
+        <h2>Výkazy a materiál</h2>
+        {reportWorkOrders.map((order) => {
+          const employee = roster.find((item) => item.user_id === order.assignee_id);
+          return <section className="data-print-details" key={order.id}>
+            <strong>{order.title} · {employee?.full_name || employee?.email || ""}</strong>
+            {order.employee_materials && <p>Použitý materiál: {order.employee_materials}</p>}
+            {order.work_report && <p>Vykonaná práca: {order.work_report}</p>}
+            {order.employee_note && <p>Poznámka: {order.employee_note}</p>}
+          </section>;
+        })}
+        <h2>Výkaz jázd</h2>
+        <table><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Zákazka</th><th>Trasa</th><th>Km</th></tr></thead><tbody>{reportVehicleTrips.map((trip) => {
+          const member = roster.find((item) => item.user_id === trip.user_id);
+          const order = workOrders.find((item) => item.id === trip.work_order_id);
+          return <tr key={trip.id}><td>{member?.full_name || member?.email || ""}</td><td>{trip.trip_date}</td><td>{order?.title ?? "—"}</td><td>{trip.origin} → {trip.destination}{trip.is_round_trip ? " (spiatočne)" : ""}</td><td>{hoursLabel(Number(trip.distance_km))}</td></tr>;
+        })}</tbody></table>
         <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
       </section>}
       {selectedEntry && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedId(null); }}>
