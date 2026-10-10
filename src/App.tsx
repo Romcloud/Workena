@@ -230,13 +230,6 @@ export function App() {
   const client = supabase;
 
   useEffect(() => {
-    if (page === "terms") {
-      return <TermsOfService onBack={() => {
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-        setPage("dashboard");
-      }} />;
-    }
-
     if (!client) {
       setAuthReady(true);
       return;
@@ -259,7 +252,7 @@ export function App() {
       workOrderRequest.current += 1;
       workOrderPhotosRequest.current += 1;
       setSelectedId(null);
-      setPage("dashboard");
+      setPage(window.location.hash === "#obchodne-podmienky" ? "terms" : "dashboard");
     });
     void client.auth.getSession().then(({ data: sessionData, error: sessionError }) => {
       if (!alive) return;
@@ -1503,6 +1496,13 @@ export function App() {
     window.print();
   };
 
+  if (page === "terms") {
+    return <TermsOfService onBack={() => {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      setPage("dashboard");
+    }} />;
+  }
+
   if (!client) {
     return (
       <main className="center-page">
@@ -1862,11 +1862,6 @@ export function App() {
       monthBounds(attendanceMonth).end.getTime(),
     ), 0);
     const mileageTotal = filteredReportVehicleTrips.reduce((sum, trip) => sum + Number(trip.distance_km), 0);
-    const selectedEmployeeName = reportEmployeeId === "ALL"
-      ? "Všetci zamestnanci"
-      : roster.find((member) => member.user_id === reportEmployeeId)?.full_name
-        || roster.find((member) => member.user_id === reportEmployeeId)?.email
-        || "Zamestnanec";
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
