@@ -60,6 +60,7 @@ export type AttendanceShift = {
   user_id: string;
   started_at: string;
   ended_at: string | null;
+  source_work_entry_id: string | null;
 };
 
 export type AttendanceBreak = {
