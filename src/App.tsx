@@ -61,8 +61,8 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat("sk-SK", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
 }
 
-function localDateKey(value: string) {
-  const date = new Date(value);
+function localDateKey(value: string | Date) {
+  const date = typeof value === "string" ? new Date(value) : value;
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
