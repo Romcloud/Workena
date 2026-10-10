@@ -28,9 +28,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
 import type { AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
+import { TermsOfService } from "./TermsOfService";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history";
+type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "terms";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
@@ -187,8 +188,10 @@ export function App() {
   const [tripMapBusy, setTripMapBusy] = useState(false);
   const [tripNotice, setTripNotice] = useState("");
   const [attendanceMonth, setAttendanceMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
+  const [reportEmployeeId, setReportEmployeeId] = useState("ALL");
+  const [reportDataType, setReportDataType] = useState<"ALL" | "ATTENDANCE" | "TRIPS" | "WORK_ORDERS">("ALL");
   const [attendanceNow, setAttendanceNow] = useState(Date.now());
-  const [page, setPage] = useState<Page>("dashboard");
+  const [page, setPage] = useState<Page>(() => window.location.hash === "#obchodne-podmienky" ? "terms" : "dashboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
@@ -205,6 +208,15 @@ export function App() {
   const workOrderPhotosRequest = useRef(0);
   const vehicleTripsRequest = useRef(0);
 
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash === "#obchodne-podmienky") setPage("terms");
+      else setPage((current) => current === "terms" ? "dashboard" : current);
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
   const activeMembership = memberships.find((membership) => membership.company_id === companyId) ?? memberships[0];
   const activeCompanyId = activeMembership?.company_id ?? "";
   const isManager = activeMembership?.role === "OWNER" || activeMembership?.role === "MANAGER";
@@ -218,6 +230,13 @@ export function App() {
   const client = supabase;
 
   useEffect(() => {
+    if (page === "terms") {
+      return <TermsOfService onBack={() => {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        setPage("dashboard");
+      }} />;
+    }
+
     if (!client) {
       setAuthReady(true);
       return;
@@ -522,18 +541,17 @@ export function App() {
     attendanceAutoStartKeys.current.add(autoStartKey);
 
     let alive = true;
-    void client.rpc("start_attendance", { p_company_id: activeCompanyId }).then(({ error: startError }) => {
-      if (startError) {
+    void (async () => {
+      try {
+        const { error: startError } = await client.rpc("start_attendance", { p_company_id: activeCompanyId });
+        if (startError) throw startError;
+        if (!alive) return;
+        await refreshAttendance();
+      } catch (reason: unknown) {
         attendanceAutoStartKeys.current.delete(autoStartKey);
-        if (alive) setError(startError.message);
-        return;
+        if (alive) setError(errorText(reason));
       }
-      if (!alive) return;
-      void refreshAttendance().catch((reason: unknown) => setError(errorText(reason)));
-    }).catch((reason: unknown) => {
-      attendanceAutoStartKeys.current.delete(autoStartKey);
-      if (alive) setError(errorText(reason));
-    });
+    })();
 
     return () => {
       alive = false;
@@ -1164,20 +1182,9 @@ export function App() {
     const monthStartDate = new Date(`${attendanceMonth}-01T00:00:00`);
     const monthEndDate = new Date(monthStartDate);
     monthEndDate.setMonth(monthEndDate.getMonth() + 1);
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const lastExpectedDate = monthEndDate < todayStart ? monthEndDate : todayStart;
     return members
       .map((member) => {
         const memberShifts = monthAttendanceShifts.filter((shift) => shift.user_id === member.user_id);
-        const joinedDate = new Date(member.created_at);
-        const firstExpectedDate = new Date(
-          Math.max(monthStartDate.getTime(), new Date(joinedDate.getFullYear(), joinedDate.getMonth(), joinedDate.getDate()).getTime()),
-        );
-        const memberEndDate = member.deactivated_at
-          ? new Date(new Date(member.deactivated_at).getFullYear(), new Date(member.deactivated_at).getMonth(), new Date(member.deactivated_at).getDate() + 1)
-          : monthEndDate;
-        const expectedUntil = memberEndDate < lastExpectedDate ? memberEndDate : lastExpectedDate;
         const totalMilliseconds = memberShifts.reduce(
           (total, shift) =>
             total + attendanceDuration(
@@ -1189,27 +1196,9 @@ export function App() {
             ),
           0,
         );
-        let days = 0;
-        const missingDays: string[] = [];
-        for (const date = new Date(firstExpectedDate); date < expectedUntil; date.setDate(date.getDate() + 1)) {
-          const dateStart = date.getTime();
-          const dateEnd = new Date(date);
-          dateEnd.setDate(dateEnd.getDate() + 1);
-          const hasWork = memberShifts.some((shift) =>
-            attendanceDuration(
-              shift,
-              attendanceBreaks.filter((pause) => pause.shift_id === shift.id),
-              attendanceNow,
-              dateStart,
-              dateEnd.getTime(),
-            ) > 0,
-          );
-          if (hasWork) days += 1;
-          else missingDays.push(localDateKey(date.toISOString()));
-        }
-        return { member, shifts: memberShifts, totalMilliseconds, days, missingDays };
+        return { member, shifts: memberShifts, totalMilliseconds };
       })
-      .filter(({ member, shifts, missingDays }) => member.active || shifts.length > 0 || missingDays.length > 0)
+      .filter(({ member, shifts }) => member.active || shifts.length > 0)
       .sort((a, b) => b.totalMilliseconds - a.totalMilliseconds);
   }, [attendanceBreaks, attendanceNow, isManager, monthAttendanceShifts, roster, session?.user.id]);
   const monthVehicleTrips = useMemo(
@@ -1243,12 +1232,10 @@ export function App() {
         );
         const trips = reportVehicleTrips.filter((trip) => trip.user_id === member.user_id);
         const orders = reportWorkOrders.filter((order) => order.assignee_id === member.user_id);
-        const missingDayCount = attendanceSummary.find((summary) => summary.member.user_id === member.user_id)?.missingDays.length ?? 0;
         return {
           member,
           workedMilliseconds,
           shiftCount: shifts.length,
-          missingDayCount,
           distanceKm: trips.reduce((sum, trip) => sum + Number(trip.distance_km), 0),
           tripCount: trips.length,
           reportCount: orders.length,
@@ -1256,7 +1243,7 @@ export function App() {
       })
       .filter(({ member, shiftCount, tripCount, reportCount }) => member.active || shiftCount + tripCount + reportCount > 0)
       .sort((a, b) => a.member.full_name?.localeCompare(b.member.full_name ?? "", "sk") ?? a.member.email.localeCompare(b.member.email, "sk"));
-  }, [attendanceBreaks, attendanceNow, attendanceMonth, attendanceShifts, attendanceSummary, monthAttendanceShifts, reportVehicleTrips, reportWorkOrders, roster]);
+  }, [attendanceBreaks, attendanceNow, attendanceMonth, attendanceShifts, monthAttendanceShifts, reportVehicleTrips, reportWorkOrders, roster]);
   const reportOrderSummary = useMemo(() => {
     const orderIds = new Set([
       ...reportVehicleTrips.flatMap((trip) => trip.work_order_id ? [trip.work_order_id] : []),
@@ -1275,6 +1262,37 @@ export function App() {
       }];
     }).sort((a, b) => b.distanceKm - a.distanceKm || a.order.title.localeCompare(b.order.title, "sk"));
   }, [reportVehicleTrips, reportWorkOrders, roster, workOrders]);
+  const filteredReportAttendanceShifts = useMemo(
+    () => reportDataType === "TRIPS" || reportDataType === "WORK_ORDERS"
+      ? []
+      : monthAttendanceShifts.filter((shift) => reportEmployeeId === "ALL" || shift.user_id === reportEmployeeId),
+    [monthAttendanceShifts, reportDataType, reportEmployeeId],
+  );
+  const filteredReportVehicleTrips = useMemo(
+    () => reportDataType === "ATTENDANCE" || reportDataType === "WORK_ORDERS"
+      ? []
+      : reportVehicleTrips.filter((trip) => reportEmployeeId === "ALL" || trip.user_id === reportEmployeeId),
+    [reportDataType, reportEmployeeId, reportVehicleTrips],
+  );
+  const filteredReportWorkOrders = useMemo(
+    () => reportDataType === "ATTENDANCE" || reportDataType === "TRIPS"
+      ? []
+      : reportWorkOrders.filter((order) => reportEmployeeId === "ALL" || order.assignee_id === reportEmployeeId),
+    [reportDataType, reportEmployeeId, reportWorkOrders],
+  );
+  const filteredReportEmployeeSummary = useMemo(
+    () => reportEmployeeSummary.filter((summary) => reportEmployeeId === "ALL" || summary.member.user_id === reportEmployeeId),
+    [reportEmployeeId, reportEmployeeSummary],
+  );
+  const filteredReportOrderSummary = useMemo(
+    () => reportOrderSummary.filter((summary) =>
+      (reportEmployeeId === "ALL" || summary.employee?.user_id === reportEmployeeId)
+      && (reportDataType === "ALL"
+        || (reportDataType === "TRIPS" && summary.tripCount > 0)
+        || (reportDataType === "WORK_ORDERS" && summary.reportCount > 0)),
+    ),
+    [reportDataType, reportEmployeeId, reportOrderSummary],
+  );
   const activeShift = attendanceShifts.find(
     (shift) => shift.ended_at === null && shift.user_id === session?.user.id,
   ) ?? null;
@@ -1392,10 +1410,10 @@ export function App() {
 
   const exportMonthlyCsv = () => {
     const rows: Array<Array<string | number | null | undefined>> = [
-      ["Typ riadka", "Zamestnanec", "Dátum", "Zákazka", "Začiatok", "Koniec", "Odpracovaný čas", "Odkiaľ", "Kam", "Kilometre", "Typ jazdy", "Použitý materiál", "Výkaz práce", "Poznámka", "Chýbajúce dni"],
+      ["Typ riadka", "Zamestnanec", "Dátum", "Zákazka", "Začiatok", "Koniec", "Odpracovaný čas", "Odkiaľ", "Kam", "Kilometre", "Typ jazdy", "Použitý materiál", "Výkaz práce", "Poznámka"],
     ];
     const { start, end } = monthBounds(attendanceMonth);
-    for (const shift of monthAttendanceShifts) {
+    for (const shift of filteredReportAttendanceShifts) {
       const shiftBreaks = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
       const employee = roster.find((member) => member.user_id === shift.user_id);
       rows.push([
@@ -1410,7 +1428,7 @@ export function App() {
         shiftBreaks.map((pause) => `Prestávka ${timeLabel(pause.started_at)}–${pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}`).join("; "),
       ]);
     }
-    for (const trip of reportVehicleTrips) {
+    for (const trip of filteredReportVehicleTrips) {
       const employee = roster.find((member) => member.user_id === trip.user_id);
       const order = workOrders.find((item) => item.id === trip.work_order_id);
       rows.push([
@@ -1426,7 +1444,7 @@ export function App() {
         "", "", trip.note ?? "",
       ]);
     }
-    for (const order of reportWorkOrders) {
+    for (const order of filteredReportWorkOrders) {
       const employee = roster.find((member) => member.user_id === order.assignee_id);
       rows.push([
         "Výkaz zákazky",
@@ -1436,7 +1454,7 @@ export function App() {
         order.employee_materials ?? "", order.work_report ?? "", order.employee_note ?? "",
       ]);
     }
-    for (const summary of reportEmployeeSummary) {
+    for (const summary of reportDataType === "ALL" ? filteredReportEmployeeSummary : []) {
       rows.push([
         "Súčet zamestnanca",
         summary.member.full_name || summary.member.email,
@@ -1447,10 +1465,9 @@ export function App() {
         summary.distanceKm.toFixed(2),
         `${summary.shiftCount} zmien, ${summary.tripCount} jázd, ${summary.reportCount} výkazov`,
         "", "", "",
-        summary.missingDayCount,
       ]);
     }
-    for (const summary of reportOrderSummary) {
+    for (const summary of reportDataType === "ALL" ? filteredReportOrderSummary : []) {
       rows.push([
         "Súčet zákazky",
         summary.employee?.full_name || summary.employee?.email || "",
@@ -1466,7 +1483,11 @@ export function App() {
     const link = document.createElement("a");
     link.href = url;
     const companyFileName = (activeMembership?.company.name ?? "workena").replace(/[^a-z0-9_-]+/gi, "-");
-    link.download = `${companyFileName}-report-${attendanceMonth}.csv`;
+    const employeeFileName = reportEmployeeId === "ALL"
+      ? "vsetci-zamestnanci"
+      : (roster.find((member) => member.user_id === reportEmployeeId)?.full_name ?? "zamestnanec").replace(/[^a-z0-9_-]+/gi, "-");
+    const reportTypeFileName = reportDataType.toLocaleLowerCase("sk");
+    link.download = `${companyFileName}-${employeeFileName}-${reportTypeFileName}-${attendanceMonth}.csv`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -1474,7 +1495,7 @@ export function App() {
   const printDataReport = () => {
     const previousTitle = document.title;
     document.body.classList.add("printing-data-report");
-    document.title = `${activeMembership?.company.name ?? "Workena"} - report ${attendanceMonth}`;
+    document.title = `${activeMembership?.company.name ?? "Workena"} - report ${reportEmployeeId} ${reportDataType} ${attendanceMonth}`;
     window.addEventListener("afterprint", () => {
       document.body.classList.remove("printing-data-report");
       document.title = previousTitle;
@@ -1533,7 +1554,7 @@ export function App() {
           <div><span className="benefit-icon"><ShieldCheck size={19} /></span><strong>Firemné súkromie</strong><p>Každá firma má svoje oddelené a chránené údaje.</p></div>
           <div><span className="benefit-icon"><CheckCircle2 size={19} /></span><strong>Jasný prehľad</strong><p>Vedúci nájde potrebné záznamy podľa ľudí aj práce.</p></div>
         </section>
-        <footer className="landing-footer">© {new Date().getFullYear()} Workena <span>Navrhnutá pre skutočnú prácu.</span></footer>
+        <footer className="landing-footer">© {new Date().getFullYear()} Workena <span>Navrhnutá pre skutočnú prácu.</span><a href="#obchodne-podmienky">Obchodné podmienky</a></footer>
       </main>
     );
   }
@@ -1606,10 +1627,10 @@ export function App() {
             }}><ArrowRight size={16} /></button>
           </div>
         </div>
-        <p className="attendance-schedule-note">Pracovný záznam sa automaticky prenesie ako zmena od zadaného času v dĺžke uvedených hodín, bez prestávky. Ak je v ten deň ručne meraná zmena, má prednosť, aby sa hodiny nedvojili. Plánovaný pracovný deň je každý deň od pondelka do nedele; za chýbajúci sa označí iba uplynulý deň bez dochádzky, nie dnešok ani dni mimo členstva.</p>
+        <p className="attendance-schedule-note">Pracovný záznam sa automaticky prenesie ako zmena od zadaného času v dĺžke uvedených hodín, bez prestávky. Ak je v ten deň ručne meraná zmena, má prednosť, aby sa hodiny nedvojili.</p>
         {attendanceSummary.length === 0
           ? <div className="panel employee-hours-empty">Za tento mesiac zatiaľ nie je zaznamenaná dochádzka.</div>
-          : <div className="panel employee-hours-list">{attendanceSummary.map(({ member, shifts, totalMilliseconds, days, missingDays }) => {
+          : <div className="panel employee-hours-list">{attendanceSummary.map(({ member, shifts, totalMilliseconds }) => {
             const expanded = expandedEmployeeId === member.id;
             const memberLabel = member.full_name || member.email;
             return <div className="employee-hours-item" key={member.id}>
@@ -1617,20 +1638,13 @@ export function App() {
                 <span className="avatar">{initials(memberLabel)}</span>
                 <span className="employee-hours-name"><strong>{memberLabel}</strong><small>{member.email}</small></span>
                 {!member.active && <span className="former-employee-badge">Bývalý zamestnanec</span>}
-                <span className="employee-hours-count">{days} dní · {shifts.length} zmien</span>
+                <span className="employee-hours-count">{shifts.length} zmien</span>
                 <strong className="employee-hours-total">{durationLabel(totalMilliseconds)}</strong>
                 <button className="employee-hours-toggle" aria-label={`${expanded ? "Skryť" : "Zobraziť"} dochádzku: ${memberLabel}`} aria-expanded={expanded} onClick={() => setExpandedEmployeeId(expanded ? null : member.id)}>
                   {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
                 </button>
               </div>
-              <div className="attendance-missing-count">Chýbajúce záznamy: <strong>{missingDays.length} dní</strong></div>
               {expanded && <div className="employee-hours-details attendance-details">
-                <section className="attendance-missing-list">
-                  <strong>Chýbajúce dni</strong>
-                  {missingDays.length
-                    ? <ul>{missingDays.map((day) => <li key={day}>{dateLabel(`${day}T12:00:00`)}</li>)}</ul>
-                    : <p>Bez chýbajúcich záznamov za uplynulé dni.</p>}
-                </section>
                 {shifts.length === 0
                   ? <p className="employee-hours-no-entries">Bez dochádzky za tento mesiac.</p>
                   : [...shifts].sort((a, b) => b.started_at.localeCompare(a.started_at)).map((shift) => {
@@ -1840,12 +1854,23 @@ export function App() {
   );
 
   const renderReports = () => {
-    const attendanceHours = reportEmployeeSummary.reduce((sum, employee) => sum + employee.workedMilliseconds, 0);
-    const mileageTotal = reportEmployeeSummary.reduce((sum, employee) => sum + employee.distanceKm, 0);
+    const attendanceHours = filteredReportAttendanceShifts.reduce((sum, shift) => sum + attendanceDuration(
+      shift,
+      attendanceBreaks.filter((pause) => pause.shift_id === shift.id),
+      attendanceNow,
+      monthBounds(attendanceMonth).start.getTime(),
+      monthBounds(attendanceMonth).end.getTime(),
+    ), 0);
+    const mileageTotal = filteredReportVehicleTrips.reduce((sum, trip) => sum + Number(trip.distance_km), 0);
+    const selectedEmployeeName = reportEmployeeId === "ALL"
+      ? "Všetci zamestnanci"
+      : roster.find((member) => member.user_id === reportEmployeeId)?.full_name
+        || roster.find((member) => member.user_id === reportEmployeeId)?.email
+        || "Zamestnanec";
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
-          <div><span className="eyebrow">MESAČNÝ REPORT</span><h1>Exporty a reporty</h1><p>Dochádzka, jazdy a výkazy podľa zamestnanca a zákazky.</p></div>
+          <div><span className="eyebrow">MESAČNÝ REPORT</span><h1>Exporty a reporty</h1><p>Vyberte jedného zamestnanca a druh údajov pre samostatný export.</p></div>
           <div className="report-heading-actions">
             <button className="button button-outline" onClick={exportMonthlyCsv}><Download size={16} /> Exportovať do Excelu (CSV)</button>
             <button className="button button-primary" onClick={printDataReport}><Printer size={16} /> Exportovať PDF</button>
@@ -1853,30 +1878,45 @@ export function App() {
         </header>
         <section className="report-filter panel">
           <label className="field"><span>Obdobie reportu</span><input type="month" value={attendanceMonth} max={localDateKey(new Date().toISOString()).slice(0, 7)} onChange={(event) => setAttendanceMonth(event.target.value)} /></label>
+          <label className="field"><span>Zamestnanec</span><select value={reportEmployeeId} onChange={(event) => setReportEmployeeId(event.target.value)}><option value="ALL">Všetci zamestnanci</option>{roster.filter((member) => member.role === "EMPLOYEE").map((member) => <option key={member.id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>
+          <label className="field"><span>Druh údajov</span><select value={reportDataType} onChange={(event) => {
+            const value = event.target.value;
+            if (value === "ALL" || value === "ATTENDANCE" || value === "TRIPS" || value === "WORK_ORDERS") setReportDataType(value);
+          }}><option value="ALL">Všetky údaje</option><option value="ATTENDANCE">Dochádzka</option><option value="TRIPS">Výkazy jázd</option><option value="WORK_ORDERS">Výkazy zákaziek</option></select></label>
           <div><small>Odpracovaný čas</small><strong>{durationLabel(attendanceHours)}</strong></div>
           <div><small>Najazdené kilometre</small><strong>{hoursLabel(mileageTotal)} km</strong></div>
-          <div><small>Výkazy zákaziek</small><strong>{reportWorkOrders.length}</strong></div>
+          <div><small>Výkazy zákaziek</small><strong>{filteredReportWorkOrders.length}</strong></div>
         </section>
-        <section className="records-section">
-          <div className="section-title-row"><div><h2><Users size={17} /> Súhrn podľa zamestnanca</h2><p>{attendanceMonthLabel}</p></div><span className="count-pill">{reportEmployeeSummary.length} zamestnancov</span></div>
-          {reportEmployeeSummary.length
-            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zamestnanec</th><th>Zmeny</th><th>Odpracovaný čas</th><th>Chýbajúce dni</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportEmployeeSummary.map((summary) => <tr key={summary.member.id}>
-              <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.missingDayCount}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+        {reportDataType === "ALL" && <section className="records-section">
+          <div className="section-title-row"><div><h2><Users size={17} /> Súhrn podľa zamestnanca</h2><p>{attendanceMonthLabel}</p></div><span className="count-pill">{filteredReportEmployeeSummary.length} zamestnancov</span></div>
+          {filteredReportEmployeeSummary.length
+            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zamestnanec</th><th>Zmeny</th><th>Odpracovaný čas</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{filteredReportEmployeeSummary.map((summary) => <tr key={summary.member.id}>
+              <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
             </tr>)}</tbody></table></div>
             : <div className="panel employee-hours-empty">Za vybraný mesiac nie sú údaje.</div>}
         </section>
-        <section className="records-section">
-          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Súhrn podľa zákazky</h2><p>Kilometre viazané na zákazku a odovzdané výkazy.</p></div><span className="count-pill">{reportOrderSummary.length} zákaziek</span></div>
-          {reportOrderSummary.length
-            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zákazka</th><th>Pracovník</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportOrderSummary.map((summary) => <tr key={summary.order.id}>
-              <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+        {reportDataType === "ATTENDANCE" && <section className="records-section">
+          <div className="section-title-row"><div><h2><Clock3 size={17} /> Dochádzka zamestnancov</h2><p>{attendanceMonthLabel}</p></div><span className="count-pill">{filteredReportAttendanceShifts.length} zmien</span></div>
+          {filteredReportAttendanceShifts.length
+            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Od – do</th><th>Prestávky</th><th>Čistý čas</th></tr></thead><tbody>{filteredReportAttendanceShifts.map((shift) => {
+              const member = roster.find((item) => item.user_id === shift.user_id);
+              const pauses = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
+              return <tr key={shift.id}><td>{member?.full_name || member?.email || ""}</td><td>{dateLabel(shift.started_at)}</td><td>{timeLabel(shift.started_at)} – {shift.ended_at ? timeLabel(shift.ended_at) : "Prebieha"}</td><td>{pauses.map((pause) => `${timeLabel(pause.started_at)}–${pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}`).join(", ") || "—"}</td><td>{durationLabel(attendanceDuration(shift, pauses, attendanceNow, monthBounds(attendanceMonth).start.getTime(), monthBounds(attendanceMonth).end.getTime()))}</td></tr>;
+            })}</tbody></table></div>
+            : <div className="panel employee-hours-empty">Za vybraný mesiac nie je dochádzka.</div>}
+        </section>}
+        {reportDataType !== "ATTENDANCE" && <section className="records-section">
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Súhrn podľa zákazky</h2><p>Kilometre viazané na zákazku a odovzdané výkazy.</p></div><span className="count-pill">{filteredReportOrderSummary.length} zákaziek</span></div>
+          {filteredReportOrderSummary.length
+            ? <div className="panel report-table-wrap"><table className="report-table"><thead><tr><th>Zákazka</th><th>Pracovník</th>{reportDataType !== "WORK_ORDERS" && <><th>Jazdy</th><th>Km</th></>}{reportDataType !== "TRIPS" && <th>Výkazy</th>}</tr></thead><tbody>{filteredReportOrderSummary.map((summary) => <tr key={summary.order.id}>
+              <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td>{reportDataType !== "WORK_ORDERS" && <><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td></>}{reportDataType !== "TRIPS" && <td>{summary.reportCount}</td>}
             </tr>)}</tbody></table></div>
             : <div className="panel employee-hours-empty">V tomto mesiaci nie sú zákazky s výkazom ani priradenými jazdami.</div>}
         </section>
-        <section className="records-section">
-          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Výkazy odovzdané v mesiaci</h2><p>Materiál a vykonaná práca zákaziek.</p></div><span className="count-pill">{reportWorkOrders.length} výkazov</span></div>
-          {reportWorkOrders.length
-            ? <div className="work-order-list">{reportWorkOrders.map((order) => {
+        {reportDataType !== "ATTENDANCE" && reportDataType !== "TRIPS" && <section className="records-section">
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Výkazy odovzdané v mesiaci</h2><p>Materiál a vykonaná práca zákaziek.</p></div><span className="count-pill">{filteredReportWorkOrders.length} výkazov</span></div>
+          {filteredReportWorkOrders.length
+            ? <div className="work-order-list">{filteredReportWorkOrders.map((order) => {
               const employee = roster.find((member) => member.user_id === order.assignee_id);
               return <article className="panel work-order-report-card" key={order.id}>
                 <div><strong>{order.title}</strong><small>{employee?.full_name || employee?.email || "Bývalý zamestnanec"} · {dateLabel(order.updated_at)}</small></div>
@@ -1887,6 +1927,7 @@ export function App() {
             })}</div>
             : <div className="panel employee-hours-empty">Za tento mesiac neboli odovzdané pracovné výkazy.</div>}
         </section>
+        }
       </section>
     );
   };
@@ -2048,6 +2089,7 @@ export function App() {
           {isManager && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
           {isManager && <button className={`nav-link ${page === "history" ? "active" : ""}`} onClick={() => setPage("history")}><History size={18} /> História</button>}
+          <button className="nav-link" onClick={() => { window.location.hash = "obchodne-podmienky"; }}><ShieldCheck size={18} /> Obchodné podmienky</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="profile-row"><span className="avatar">{initials(profileName)}</span><span className="profile-name"><strong>{profileName}</strong><small>{activeMembership ? roleName(activeMembership.role) : "Bez firmy"}</small></span></div>
@@ -2055,7 +2097,7 @@ export function App() {
         </div>
       </aside>
       <div className="main-area">
-        <header className="mobile-top"><Brand /><span className="mobile-company">{activeMembership?.company.name}</span><button className="logout-button" aria-label="Odhlásiť sa" onClick={() => void signOut()}><LogOut size={17} /></button></header>
+        <header className="mobile-top"><Brand /><span className="mobile-company">{activeMembership?.company.name}</span><a className="mobile-terms" href="#obchodne-podmienky">Podmienky</a><button className="logout-button" aria-label="Odhlásiť sa" onClick={() => void signOut()}><LogOut size={17} /></button></header>
         <main className="page-content">
           {!activeMembership ? (
             <section className="center-card company-create">
@@ -2194,29 +2236,32 @@ export function App() {
       </section>}
       {isManager && <section className="print-report data-print-report">
         <header className="print-report-header"><span className="brand"><span className="brand-mark">w</span> workena</span><span>Dochádzka, jazdy a výkazy</span></header>
-        <h1>Mesačný report — {attendanceMonthLabel}</h1>
+        <h1>Mesačný report — {attendanceMonthLabel} · {reportEmployeeId === "ALL" ? "všetci zamestnanci" : roster.find((member) => member.user_id === reportEmployeeId)?.full_name || roster.find((member) => member.user_id === reportEmployeeId)?.email} · {reportDataType === "ALL" ? "všetky údaje" : reportDataType === "ATTENDANCE" ? "dochádzka" : reportDataType === "TRIPS" ? "jazdy" : "výkazy zákaziek"}</h1>
         <p className="print-report-company">{activeMembership?.company.name} · Vygenerované {dateLabel(new Date().toISOString())}</p>
         <div className="data-print-total">
-          <strong>Odpracovaný čas: {durationLabel(reportEmployeeSummary.reduce((sum, employee) => sum + employee.workedMilliseconds, 0))}</strong>
-          <strong>Najazdené: {hoursLabel(reportEmployeeSummary.reduce((sum, employee) => sum + employee.distanceKm, 0))} km</strong>
-          <strong>Výkazy: {reportWorkOrders.length}</strong>
+          {(reportDataType === "ALL" || reportDataType === "ATTENDANCE") && <strong>Odpracovaný čas: {durationLabel(filteredReportAttendanceShifts.reduce((sum, shift) => sum + attendanceDuration(shift, attendanceBreaks.filter((pause) => pause.shift_id === shift.id), attendanceNow, monthBounds(attendanceMonth).start.getTime(), monthBounds(attendanceMonth).end.getTime()), 0))}</strong>}
+          {(reportDataType === "ALL" || reportDataType === "TRIPS") && <strong>Najazdené: {hoursLabel(filteredReportVehicleTrips.reduce((sum, trip) => sum + Number(trip.distance_km), 0))} km</strong>}
+          {(reportDataType === "ALL" || reportDataType === "WORK_ORDERS") && <strong>Výkazy: {filteredReportWorkOrders.length}</strong>}
         </div>
-        <h2>Súhrn podľa zamestnanca</h2>
-        <table><thead><tr><th>Zamestnanec</th><th>Zmeny</th><th>Čas</th><th>Chýbajúce dni</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportEmployeeSummary.map((summary) => <tr key={summary.member.id}>
-          <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.missingDayCount}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+        {reportDataType === "ALL" && <><h2>Súhrn podľa zamestnanca</h2>
+        <table><thead><tr><th>Zamestnanec</th><th>Zmeny</th><th>Čas</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{filteredReportEmployeeSummary.map((summary) => <tr key={summary.member.id}>
+          <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
         </tr>)}</tbody></table>
-        <h2>Súhrn podľa zákazky</h2>
-        <table><thead><tr><th>Zákazka</th><th>Pracovník</th><th>Jazdy</th><th>Km</th><th>Výkazy</th></tr></thead><tbody>{reportOrderSummary.map((summary) => <tr key={summary.order.id}>
-          <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
+        </>}
+        {reportDataType !== "ATTENDANCE" && <><h2>Súhrn podľa zákazky</h2>
+        <table><thead><tr><th>Zákazka</th><th>Pracovník</th>{reportDataType !== "WORK_ORDERS" && <><th>Jazdy</th><th>Km</th></>}{reportDataType !== "TRIPS" && <th>Výkazy</th>}</tr></thead><tbody>{filteredReportOrderSummary.map((summary) => <tr key={summary.order.id}>
+          <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td>{reportDataType !== "WORK_ORDERS" && <><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td></>}{reportDataType !== "TRIPS" && <td>{summary.reportCount}</td>}
         </tr>)}</tbody></table>
-        <h2>Dochádzka</h2>
-        <table><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Od – do</th><th>Prestávky</th><th>Čistý čas</th></tr></thead><tbody>{monthAttendanceShifts.map((shift) => {
+        </>}
+        {(reportDataType === "ALL" || reportDataType === "ATTENDANCE") && <><h2>Dochádzka</h2>
+        <table><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Od – do</th><th>Prestávky</th><th>Čistý čas</th></tr></thead><tbody>{filteredReportAttendanceShifts.map((shift) => {
           const member = roster.find((item) => item.user_id === shift.user_id);
           const pauses = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
           return <tr key={shift.id}><td>{member?.full_name || member?.email || ""}</td><td>{dateLabel(shift.started_at)}</td><td>{timeLabel(shift.started_at)} – {shift.ended_at ? timeLabel(shift.ended_at) : "Prebieha"}</td><td>{pauses.map((pause) => `${timeLabel(pause.started_at)}–${pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}`).join(", ")}</td><td>{durationLabel(attendanceDuration(shift, pauses, attendanceNow, monthBounds(attendanceMonth).start.getTime(), monthBounds(attendanceMonth).end.getTime()))}</td></tr>;
         })}</tbody></table>
-        <h2>Výkazy a materiál</h2>
-        {reportWorkOrders.map((order) => {
+        </>}
+        {(reportDataType === "ALL" || reportDataType === "WORK_ORDERS") && <><h2>Výkazy a materiál</h2>
+        {filteredReportWorkOrders.map((order) => {
           const employee = roster.find((item) => item.user_id === order.assignee_id);
           return <section className="data-print-details" key={order.id}>
             <strong>{order.title} · {employee?.full_name || employee?.email || ""}</strong>
@@ -2225,12 +2270,14 @@ export function App() {
             {order.employee_note && <p>Poznámka: {order.employee_note}</p>}
           </section>;
         })}
-        <h2>Výkaz jázd</h2>
-        <table><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Zákazka</th><th>Trasa</th><th>Km</th></tr></thead><tbody>{reportVehicleTrips.map((trip) => {
+        </>}
+        {(reportDataType === "ALL" || reportDataType === "TRIPS") && <><h2>Výkaz jázd</h2>
+        <table><thead><tr><th>Zamestnanec</th><th>Dátum</th><th>Zákazka</th><th>Trasa</th><th>Km</th></tr></thead><tbody>{filteredReportVehicleTrips.map((trip) => {
           const member = roster.find((item) => item.user_id === trip.user_id);
           const order = workOrders.find((item) => item.id === trip.work_order_id);
           return <tr key={trip.id}><td>{member?.full_name || member?.email || ""}</td><td>{trip.trip_date}</td><td>{order?.title ?? "—"}</td><td>{trip.origin} → {trip.destination}{trip.is_round_trip ? " (spiatočne)" : ""}</td><td>{hoursLabel(Number(trip.distance_km))}</td></tr>;
         })}</tbody></table>
+        </>}
         <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
       </section>}
       {selectedEntry && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedId(null); }}>

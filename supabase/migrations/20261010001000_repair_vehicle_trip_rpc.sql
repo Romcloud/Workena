@@ -1,4 +1,4 @@
-create table public.vehicle_trips (
+create table if not exists public.vehicle_trips (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references public.companies(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -16,15 +16,17 @@ create table public.vehicle_trips (
   created_at timestamptz not null default now()
 );
 
-create index vehicle_trips_company_date_idx
+create index if not exists vehicle_trips_company_date_idx
   on public.vehicle_trips(company_id, trip_date desc);
-create index vehicle_trips_user_date_idx
+create index if not exists vehicle_trips_user_date_idx
   on public.vehicle_trips(user_id, trip_date desc);
-create index vehicle_trips_order_date_idx
+create index if not exists vehicle_trips_order_date_idx
   on public.vehicle_trips(work_order_id, trip_date desc);
 
 alter table public.vehicle_trips enable row level security;
 
+drop policy if exists "Members read own trips and managers read company trips"
+  on public.vehicle_trips;
 create policy "Members read own trips and managers read company trips"
   on public.vehicle_trips for select to authenticated
   using (
@@ -100,3 +102,5 @@ $$;
 
 revoke all on function public.create_vehicle_trip(uuid, uuid, date, text, text, boolean, numeric, numeric, text, text) from public, anon;
 grant execute on function public.create_vehicle_trip(uuid, uuid, date, text, text, boolean, numeric, numeric, text, text) to authenticated;
+
+notify pgrst, 'reload schema';
