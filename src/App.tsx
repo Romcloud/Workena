@@ -443,14 +443,14 @@ export function App() {
     const [{ data: monthRows, error: monthError }, { data: openRows, error: openError }] = await Promise.all([
       client
         .from("attendance_shifts")
-        .select("id, company_id, user_id, started_at, ended_at")
+        .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id")
         .eq("company_id", activeCompanyId)
         .lt("started_at", nextMonthStart.toISOString())
         .or(`ended_at.is.null,ended_at.gt.${monthStart.toISOString()}`)
         .order("started_at", { ascending: false }),
       client
         .from("attendance_shifts")
-        .select("id, company_id, user_id, started_at, ended_at")
+        .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id")
         .eq("company_id", activeCompanyId)
         .is("ended_at", null),
     ]);
@@ -669,13 +669,14 @@ export function App() {
       }
       const photosError = pendingPhotos.length ? await uploadFilesToEntry(entryId, pendingPhotos) : null;
       await refreshWorkspace();
+      await refreshAttendance();
       setEditingEntry(null);
       setPendingPhotos([]);
       setPage("dashboard");
       if (photosError) {
         setError(`Záznam bol uložený, no fotografie sa nepodarilo úplne pridať: ${photosError}`);
       } else {
-        setNotice(editingEntry ? "Záznam bol upravený." : "Záznam bol uložený.");
+        setNotice(editingEntry ? "Záznam bol upravený a dochádzka zosynchronizovaná." : "Záznam bol uložený a dochádzka zosynchronizovaná.");
       }
     }
     setBusy(false);
@@ -727,6 +728,7 @@ export function App() {
     else {
       setSelectedId(null);
       await refreshWorkspace();
+      await refreshAttendance();
       setNotice("Záznam a fotografie boli odstránené.");
     }
     setBusy(false);
@@ -1572,7 +1574,7 @@ export function App() {
             }}><ArrowRight size={16} /></button>
           </div>
         </div>
-        <p className="attendance-schedule-note">Plánovaný pracovný deň je každý deň od pondelka do nedele. Za chýbajúci sa označí iba uplynutý deň bez zaznamenanej práce; dnešok ani dni pred nástupom či po odchode člena sa nepočítajú.</p>
+        <p className="attendance-schedule-note">Pracovný záznam sa automaticky prenesie ako zmena od zadaného času v dĺžke uvedených hodín, bez prestávky. Ak je v ten deň ručne meraná zmena, má prednosť, aby sa hodiny nedvojili. Plánovaný pracovný deň je každý deň od pondelka do nedele; za chýbajúci sa označí iba uplynulý deň bez dochádzky, nie dnešok ani dni mimo členstva.</p>
         {attendanceSummary.length === 0
           ? <div className="panel employee-hours-empty">Za tento mesiac zatiaľ nie je zaznamenaná dochádzka.</div>
           : <div className="panel employee-hours-list">{attendanceSummary.map(({ member, shifts, totalMilliseconds, days, missingDays }) => {
@@ -1609,7 +1611,9 @@ export function App() {
                       </div>
                       <div className="attendance-shift-line">
                         <span>{timeLabel(shift.started_at)} – {shift.ended_at ? timeLabel(shift.ended_at) : "prebieha"}</span>
-                        {!shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
+                        {shift.source_work_entry_id
+                          ? <span className="status-pill status-approved">Zo záznamu práce</span>
+                          : !shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
                       </div>
                       {shiftBreaks.map((pause) => <div className="attendance-break-line" key={pause.id}>
                         <Coffee size={13} /><span>Prestávka {timeLabel(pause.started_at)} – {pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}</span>
