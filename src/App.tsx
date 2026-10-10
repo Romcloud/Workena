@@ -1894,7 +1894,7 @@ export function App() {
               <td>{summary.member.full_name || summary.member.email}</td><td>{summary.shiftCount}</td><td>{durationLabel(summary.workedMilliseconds)}</td><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td><td>{summary.reportCount}</td>
             </tr>)}</tbody></table></div>
             : <div className="panel employee-hours-empty">Za vybraný mesiac nie sú údaje.</div>}
-        </section>
+        </section>}
         {reportDataType === "ATTENDANCE" && <section className="records-section">
           <div className="section-title-row"><div><h2><Clock3 size={17} /> Dochádzka zamestnancov</h2><p>{attendanceMonthLabel}</p></div><span className="count-pill">{filteredReportAttendanceShifts.length} zmien</span></div>
           {filteredReportAttendanceShifts.length
