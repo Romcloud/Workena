@@ -79,9 +79,18 @@ Pred prvým nasadením:
 
 Zostavený `dist/` neobsahuje `.env.local`; workflow vloží premenné pri zostavení. Publishable/anon kľúč je súčasťou verejného JavaScript balíka a bezpečnosť dát zaisťujú RLS politiky Supabase.
 
-Pred nasadením aktuálnej verzie spustite v **Supabase → SQL Editor → New query** migrácie v tomto poradí: [`20261010000100_employee_data_visibility.sql`](./supabase/migrations/20261010000100_employee_data_visibility.sql), potom [`20261010000200_employee_history_and_access.sql`](./supabase/migrations/20261010000200_employee_history_and_access.sql). Ak ste už prvú migráciu spustili, spustite iba druhú. Každú migráciu spustite v danom Supabase projekte iba raz; úvodnú schému znovu nespúšťajte. Zamestnanci majú prístup iba k vlastným údajom; odobraté členstvá sa archivujú a vedúci si zachovajú históriu.
+Pred nasadením aktuálnej verzie spustite v **Supabase → SQL Editor → New query** nepoužité migrácie v tomto poradí: [`20261010000100_employee_data_visibility.sql`](./supabase/migrations/20261010000100_employee_data_visibility.sql), [`20261010000200_employee_history_and_access.sql`](./supabase/migrations/20261010000200_employee_history_and_access.sql), [`20261010000300_attendance.sql`](./supabase/migrations/20261010000300_attendance.sql), [`20261010000400_work_orders.sql`](./supabase/migrations/20261010000400_work_orders.sql), [`20261010000500_work_order_reports_and_photos.sql`](./supabase/migrations/20261010000500_work_order_reports_and_photos.sql), [`20261010000600_reports_and_vehicle_trips.sql`](./supabase/migrations/20261010000600_reports_and_vehicle_trips.sql) a [`20261010000700_bank_transfer_payments.sql`](./supabase/migrations/20261010000700_bank_transfer_payments.sql). Každú migráciu spustite v danom Supabase projekte iba raz; spustite len tie, ktoré ste ešte nespustili. Úvodnú schému znovu nespúšťajte. Zamestnanci majú prístup iba k vlastným údajom; odobraté členstvá sa archivujú a vedúci si zachovajú históriu. Dochádzka eviduje zmeny a prestávky. Pracovný týždeň je pondelok až nedeľa; uplynulé dni bez dochádzky sa zobrazia ako chýbajúce. Vlastník priraďuje zákazky aktívnym zamestnancom; pracovník aktualizuje stav, prikladá fotografie pred a po práci a vypĺňa výkaz s použitým materiálom. Vlastníci a vedúci môžu exportovať mesačné súhrny dochádzky, jázd a výkazov do CSV pre Excel alebo vytlačiť PDF report. Pracovník zadá miesta odchodu a cieľa; OpenStreetMap vypočíta cestné kilometre, ktoré možno upraviť ručne.
 
-Bezplatný plán povoľuje najviac 2 aktívnych zamestnancov. Workena Pro je uvedená za 50 € ročne; online platby ani automatická aktivácia Pro zatiaľ nie sú zapnuté.
+Návrh cien určený na testovanie so zákazníkmi: Basic 19 €/mes., Pro 39 €/mes. a Team 69 €/mes. Ide o hypotézu na overenie, nie o potvrdený priemer slovenského trhu ani o aktívnu ponuku. Aktuálny bezplatný plán povoľuje najviac 2 aktívnych zamestnancov. Majiteľ môže vytvoriť žiadosť o bankový prevod a zobraziť lokálne vygenerovaný QR kód vo formáte SPAYD; pri platbe musí v bankovej aplikácii overiť údaje príjemcu, sumu a variabilný symbol. Záznam žiadosti je oddelený od stavu predplatného. Po overení pripísanej platby z výpisu účtu ju môže potvrdiť iba správca Workena priamo v Supabase SQL Editore, napríklad:
+
+```sql
+update public.payment_requests
+set status = 'CONFIRMED', reviewed_at = now()
+where variable_symbol = '<VARIABILNY_SYMBOL>'
+  and status = 'PENDING';
+```
+
+Na zamietnutie sa použije rovnaký príkaz s `status = 'REJECTED'`. Klientská aplikácia nemá oprávnenie meniť stav žiadosti; potvrdenie prevodu samo osebe nemení plán ani oprávnenia firmy. Pred spustením skutočných platených plánov treba nakonfigurovať ich dostupné funkcie a aktiváciu. Bankové údaje a obsah QR sa generujú priamo v prehliadači a neposielajú sa QR službe tretej strany.
 
 Vedúci môže mesačný prehľad vytlačiť alebo uložiť ako PDF cez **Vytlačiť / uložiť PDF** a následnú voľbu **Uložiť ako PDF** v dialógu tlače prehliadača.
 
@@ -100,9 +109,9 @@ Workenu možno pridať na plochu telefónu: v **Safari na iPhone/iPade** vyberte
 ## Ochrana firemných údajov
 
 - Každý pracovný záznam aj fotografia sú naviazané na `company_id`; tabuľka fotografií má zároveň zložený cudzí kľúč, ktorý nedovolí priradiť fotografiu k záznamu inej firmy.
-- RLS je zapnuté na všetkých štyroch aplikačných tabuľkách. Členstvo, rola vlastníka/vedúceho, autor záznamu a jeho stav sa overujú v databázových politikách, nie len v Reacte.
+- RLS je zapnuté na aplikačných tabuľkách vrátane dochádzky a zákaziek. Členstvo, rola vlastníka/vedúceho a priradenie zákazky sa overujú v databázových politikách a funkciách, nie len v Reacte.
 - Priame vkladanie alebo zmena členstiev nie sú povolené. Databázové funkcie kontrolujú oprávnenie pri založení firmy, pridaní/odstránení člena, schválení a opätovnom odoslaní záznamu.
-- Bucket `work-photos` je súkromný. Storage politiky povoľujú prístup iba k cestám obsahujúcim správne ID firmy aj pracovného záznamu; aplikácia obrázky zobrazuje cez časovo obmedzené podpísané URL.
+- Buckety `work-photos` a `work-order-photos` sú súkromné. Storage politiky povoľujú prístup iba k cestám obsahujúcim správne ID firmy aj pracovného záznamu alebo priradenej zákazky; aplikácia obrázky zobrazuje cez časovo obmedzené podpísané URL.
 - Neprihlásená rola `anon` nemá prístup k aplikačným tabuľkám ani k fotografiám.
 
 ## Kontrolný zoznam pred spustením
