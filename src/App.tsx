@@ -522,18 +522,17 @@ export function App() {
     attendanceAutoStartKeys.current.add(autoStartKey);
 
     let alive = true;
-    void client.rpc("start_attendance", { p_company_id: activeCompanyId }).then(({ error: startError }) => {
-      if (startError) {
+    void (async () => {
+      try {
+        const { error: startError } = await client.rpc("start_attendance", { p_company_id: activeCompanyId });
+        if (startError) throw startError;
+        if (!alive) return;
+        await refreshAttendance();
+      } catch (reason: unknown) {
         attendanceAutoStartKeys.current.delete(autoStartKey);
-        if (alive) setError(startError.message);
-        return;
+        if (alive) setError(errorText(reason));
       }
-      if (!alive) return;
-      void refreshAttendance().catch((reason: unknown) => setError(errorText(reason)));
-    }).catch((reason: unknown) => {
-      attendanceAutoStartKeys.current.delete(autoStartKey);
-      if (alive) setError(errorText(reason));
-    });
+    })();
 
     return () => {
       alive = false;
