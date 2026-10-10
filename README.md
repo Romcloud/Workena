@@ -92,6 +92,8 @@ where variable_symbol = '<VARIABILNY_SYMBOL>'
 
 Na zamietnutie sa použije rovnaký príkaz s `status = 'REJECTED'`. Klientská aplikácia nemá oprávnenie meniť stav žiadosti; potvrdenie prevodu samo osebe nemení plán ani oprávnenia firmy. Pred spustením skutočných platených plánov treba nakonfigurovať ich dostupné funkcie a aktiváciu. Bankové údaje a obsah QR sa generujú priamo v prehliadači a neposielajú sa QR službe tretej strany.
 
+Po aplikovaní migrácie [`20261010000900_resume_attendance_on_login.sql`](./supabase/migrations/20261010000900_resume_attendance_on_login.sql) sa dochádzka zamestnanca automaticky spustí pri prihlásení alebo obnoví už otvorená zmena. Odhlásenie ani zatvorenie aplikácie zmenu neukončí; zamestnanec ju musí zastaviť tlačidlom **Ukončiť zmenu**. Migráciu spustite v SQL Editore iba raz a až po migráciách 003 a 008.
+
 Vedúci môže mesačný prehľad vytlačiť alebo uložiť ako PDF cez **Vytlačiť / uložiť PDF** a následnú voľbu **Uložiť ako PDF** v dialógu tlače prehliadača.
 
 Workenu možno pridať na plochu telefónu: v **Safari na iPhone/iPade** vyberte **Zdieľať → Pridať na plochu**, v **Chrome na Androide** otvorte ponuku a vyberte **Nainštalovať aplikáciu** alebo **Pridať na plochu**. Aplikácia používa samostatnú ikonu a zobrazí sa bez panela prehliadača. Offline sa načíta len statická aplikácia; prihlásenie a firemné údaje vyžadujú internet.

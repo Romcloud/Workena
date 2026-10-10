@@ -199,6 +199,7 @@ export function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const attendanceRequest = useRef(0);
+  const attendanceAutoStartKeys = useRef(new Set<string>());
   const workOrderRequest = useRef(0);
   const workOrdersCompany = useRef("");
   const workOrderPhotosRequest = useRef(0);
@@ -508,6 +509,36 @@ export function App() {
   useEffect(() => {
     void refreshAttendance().catch((reason: unknown) => setError(errorText(reason)));
   }, [refreshAttendance]);
+
+  useEffect(() => {
+    if (!session) {
+      attendanceAutoStartKeys.current.clear();
+      return;
+    }
+    if (!client || activeMembership?.role !== "EMPLOYEE" || !activeMembership.active) return;
+
+    const autoStartKey = `${session.user.id}:${activeCompanyId}`;
+    if (attendanceAutoStartKeys.current.has(autoStartKey)) return;
+    attendanceAutoStartKeys.current.add(autoStartKey);
+
+    let alive = true;
+    void client.rpc("start_attendance", { p_company_id: activeCompanyId }).then(({ error: startError }) => {
+      if (startError) {
+        attendanceAutoStartKeys.current.delete(autoStartKey);
+        if (alive) setError(startError.message);
+        return;
+      }
+      if (!alive) return;
+      void refreshAttendance().catch((reason: unknown) => setError(errorText(reason)));
+    }).catch((reason: unknown) => {
+      attendanceAutoStartKeys.current.delete(autoStartKey);
+      if (alive) setError(errorText(reason));
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeCompanyId, activeMembership?.role, client, refreshAttendance, session]);
 
   useEffect(() => {
     void refreshWorkOrders().catch((reason: unknown) => setError(errorText(reason)));
@@ -1537,7 +1568,7 @@ export function App() {
       </header>
       <section className={`panel attendance-clock ${activeShift ? "attendance-clock-running" : ""}`}>
         <div className="attendance-clock-copy">
-          <span className="eyebrow">DNEŠNÁ ZMENA</span>
+          <span className="eyebrow">PRACOVNÁ ZMENA</span>
           <h2>{!activeShift ? "Zatiaľ nemáte spustenú zmenu" : activeBreak ? "Práve máte prestávku" : "Pracovná zmena prebieha"}</h2>
           {activeShift && <p>Začiatok {timeLabel(activeShift.started_at)} · odpracované {durationLabel(attendanceDuration(
             activeShift,
@@ -1555,6 +1586,7 @@ export function App() {
               <button className="button button-danger" disabled={busy} onClick={() => void attendanceAction("end_attendance")}><Square size={15} /> Ukončiť zmenu</button>
             </div>}
       </section>
+      <p className="attendance-schedule-note">Prihlásenie zamestnanca zmenu automaticky spustí alebo obnoví. Odhlásenie ani zatvorenie aplikácie časovač nezastaví; na zastavenie použite tlačidlo „Ukončiť zmenu“.</p>
       {notice && <p className="invite-success" role="status">{notice}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <section className="records-section attendance-history">
