@@ -1912,7 +1912,7 @@ export function App() {
               <td>{summary.order.title}</td><td>{summary.employee?.full_name || summary.employee?.email || "Bývalý zamestnanec"}</td>{reportDataType !== "WORK_ORDERS" && <><td>{summary.tripCount}</td><td>{hoursLabel(summary.distanceKm)}</td></>}{reportDataType !== "TRIPS" && <td>{summary.reportCount}</td>}
             </tr>)}</tbody></table></div>
             : <div className="panel employee-hours-empty">V tomto mesiaci nie sú zákazky s výkazom ani priradenými jazdami.</div>}
-        </section>
+        </section>}
         {reportDataType !== "ATTENDANCE" && reportDataType !== "TRIPS" && <section className="records-section">
           <div className="section-title-row"><div><h2><ClipboardList size={17} /> Výkazy odovzdané v mesiaci</h2><p>Materiál a vykonaná práca zákaziek.</p></div><span className="count-pill">{filteredReportWorkOrders.length} výkazov</span></div>
           {filteredReportWorkOrders.length
