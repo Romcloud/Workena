@@ -20,6 +20,11 @@ export type Company = {
   name: string;
   plan: CompanyPlan;
   selected_plan?: PaymentPlan | null;
+  billing_name?: string | null;
+  billing_ico?: string | null;
+  billing_dic?: string | null;
+  billing_ic_dph?: string | null;
+  billing_address?: string | null;
 };
 
 export type AdminCompanyRow = {
@@ -146,6 +151,10 @@ export type AbsenceRequest = {
   reviewed_at: string | null;
   created_at: string;
   updated_at: string;
+  attachment_path: string | null;
+  attachment_file_name: string | null;
+  attachment_mime_type: string | null;
+  attachment_size_bytes: number | null;
 };
 
 export type VehicleTrip = {
@@ -162,4 +171,6 @@ export type VehicleTrip = {
   distance_source: "MAP" | "MANUAL" | "MAP_EDITED";
   note: string | null;
   created_at: string;
+  stops: string[];
+  return_destination: string | null;
 };

@@ -12,7 +12,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder";
+type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 type TemplateData = {
   companyName?: string;
@@ -20,6 +20,11 @@ type TemplateData = {
   planName?: string;
   amount?: string;
   variableSymbol?: string;
+  subject?: string;
+  message?: string;
+  startsAt?: string;
+  endsAt?: string;
+  reason?: string;
 };
 
 function json(status: number, body: Record<string, unknown>) {
@@ -86,6 +91,25 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
           <p>Ak ste platbu už vykonali, tento email prosím ignorujte.</p>
         `),
       };
+    case "admin_custom":
+      return {
+        subject: data.subject ?? "Správa z Workena",
+        html: layout(data.subject ?? "Správa z Workena", `
+          <p>${greeting}</p>
+          <p>${(data.message ?? "").replace(/\n/g, "<br/>")}</p>
+        `),
+      };
+    case "maintenance_notice":
+      return {
+        subject: "Plánovaná odstávka Workena",
+        html: layout("Plánovaná odstávka", `
+          <p>${greeting}</p>
+          <p>upozorňujeme na plánovanú odstávku aplikácie Workena kvôli aktualizáciám a opravám.</p>
+          <p>Od: <strong>${data.startsAt ?? ""}</strong><br/>Do: <strong>${data.endsAt ?? ""}</strong></p>
+          ${data.reason ? `<p>${data.reason}</p>` : ""}
+          <p>Počas tohto obdobia nemusí byť aplikácia dostupná. Ďakujeme za pochopenie.</p>
+        `),
+      };
     default:
       throw new Error("Neznáma šablóna emailu.");
   }
@@ -111,7 +135,7 @@ Deno.serve(async (req) => {
     const body = (await req.json()) as { template: EmailTemplate; to: string; data?: TemplateData };
     if (!body.template || !body.to) return json(400, { error: "Chýba šablóna alebo príjemca." });
 
-    const adminOnlyTemplates: EmailTemplate[] = ["payment_confirmed", "payment_reminder"];
+    const adminOnlyTemplates: EmailTemplate[] = ["payment_confirmed", "payment_reminder", "admin_custom", "maintenance_notice"];
     if (adminOnlyTemplates.includes(body.template)) {
       const { data: isAdmin } = await userClient.rpc("is_platform_admin");
       if (!isAdmin) return json(403, { error: "Prístup odmietnutý." });

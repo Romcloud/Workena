@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPin,
+  Paperclip,
   Palmtree,
   Pencil,
   Plane,
@@ -37,7 +38,7 @@ import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, Atten
 import { TermsOfService } from "./TermsOfService";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "admin";
+type Page = "dashboard" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "admin";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
@@ -45,6 +46,7 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const MAX_PHOTOS = 10;
 const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const WORK_ORDER_PHOTO_BUCKET = "work-order-photos";
+const ABSENCE_ATTACHMENT_BUCKET = "absence-attachments";
 const PAYMENT_IBAN = "SK5811000000002948309028";
 const PAYMENT_BENEFICIARY = "Roman Chlebovec - ROVOLT";
 const PAYMENT_PLAN_DETAILS: Record<PaymentPlan, { name: string; amount: number }> = {
@@ -58,6 +60,24 @@ const COMPANY_PLAN_LABELS: Record<CompanyPlan, string> = {
   PRO: "Pro",
   TEAM: "Team",
 };
+const PLAN_COMPANY_LIMIT: Record<CompanyPlan, number> = {
+  FREE: 2,
+  BASIC: 2,
+  PRO: 3,
+  TEAM: 5,
+};
+const PLAN_EMPLOYEE_LIMIT: Record<CompanyPlan, number | null> = {
+  FREE: 2,
+  BASIC: 10,
+  PRO: 30,
+  TEAM: null,
+};
+const PLAN_FEATURE_NOTES: Record<CompanyPlan, string> = {
+  FREE: "Max. 2 zamestnanci, bez možnosti prideľovať zákazky.",
+  BASIC: "Max. 10 zamestnancov, bez možnosti prideľovať zákazky.",
+  PRO: "Max. 30 zamestnancov a možnosť prideľovať zákazky.",
+  TEAM: "Neobmedzený počet zamestnancov, zákazky a všetky výhody.",
+};
 
 type WorkOrderPhotoView = WorkOrderPhoto & { url: string };
 type WorkOrderPhotoFiles = Record<string, { BEFORE: File[]; AFTER: File[] }>;
@@ -66,7 +86,7 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Požiadavku sa nepodarilo dokončiť. Skúste to znova.";
 }
 
-type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder";
+type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 async function sendTransactionalEmail(
   client: typeof supabase,
@@ -213,6 +233,15 @@ async function openStreetMapRoadDistance(origin: string, destination: string) {
   return Math.round((route.routes[0].distance / 1000) * 100) / 100;
 }
 
+async function openStreetMapMultiLegDistance(points: string[]) {
+  let total = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (index > 0) await sleep(1100);
+    total += await openStreetMapRoadDistance(points[index], points[index + 1]);
+  }
+  return Math.round(total * 100) / 100;
+}
+
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -244,6 +273,9 @@ export function App() {
   const [tripDistanceSource, setTripDistanceSource] = useState<"MAP" | "MANUAL" | "MAP_EDITED">("MANUAL");
   const [tripMapBusy, setTripMapBusy] = useState(false);
   const [tripNotice, setTripNotice] = useState("");
+  const [tripStops, setTripStops] = useState<string[]>([]);
+  const [tripReturnDestination, setTripReturnDestination] = useState("");
+  const [tripDifferentReturn, setTripDifferentReturn] = useState(false);
   const [attendanceMonth, setAttendanceMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
   const [workOrderMonth, setWorkOrderMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
   const [reportEmployeeId, setReportEmployeeId] = useState("ALL");
@@ -257,6 +289,18 @@ export function App() {
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [showEntryForm, setShowEntryForm] = useState(false);
+  const [attendanceEmployeeFilter, setAttendanceEmployeeFilter] = useState("ALL");
+  const [pendingAbsenceAttachment, setPendingAbsenceAttachment] = useState<File | null>(null);
+  const [previewPlan, setPreviewPlan] = useState<PaymentPlan | "">("");
+  const [newCompanyName, setNewCompanyName] = useState("");
+  const [billingName, setBillingName] = useState("");
+  const [billingIco, setBillingIco] = useState("");
+  const [billingDic, setBillingDic] = useState("");
+  const [billingIcDph, setBillingIcDph] = useState("");
+  const [billingAddress, setBillingAddress] = useState("");
+  const [adminEmailTargetId, setAdminEmailTargetId] = useState<string | null>(null);
+  const [adminMaintenanceOpen, setAdminMaintenanceOpen] = useState(false);
   const [historyMonth, setHistoryMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
   const [photos, setPhotos] = useState<PhotoView[]>([]);
   const [busy, setBusy] = useState(false);
@@ -294,7 +338,12 @@ export function App() {
   useEffect(() => {
     setProfileFullName(profileName);
     setProfileSelectedPlan(activeMembership?.company.selected_plan ?? "");
-  }, [activeCompanyId, profileName, activeMembership?.company.selected_plan]);
+    setBillingName(activeMembership?.company.billing_name ?? "");
+    setBillingIco(activeMembership?.company.billing_ico ?? "");
+    setBillingDic(activeMembership?.company.billing_dic ?? "");
+    setBillingIcDph(activeMembership?.company.billing_ic_dph ?? "");
+    setBillingAddress(activeMembership?.company.billing_address ?? "");
+  }, [activeCompanyId, profileName, activeMembership?.company.selected_plan, activeMembership?.company.billing_name, activeMembership?.company.billing_ico, activeMembership?.company.billing_dic, activeMembership?.company.billing_ic_dph, activeMembership?.company.billing_address]);
 
   useEffect(() => {
     if (!client) {
@@ -361,7 +410,7 @@ export function App() {
       }
       const { data: companyRows, error: companyError } = await client
         .from("companies")
-        .select("id, name, plan, selected_plan")
+        .select("id, name, plan, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
         .in("id", memberList.map((member) => member.company_id));
       if (!alive) return;
       if (companyError) {
@@ -757,7 +806,7 @@ export function App() {
         const memberRows = (refreshed ?? []) as Membership[];
         const { data: companyRows, error: companyError } = await client
           .from("companies")
-          .select("id, name, plan, selected_plan")
+          .select("id, name, plan, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
           .in("id", memberRows.map((membership) => membership.company_id));
         if (companyError) setError(companyError.message);
         else {
@@ -1108,7 +1157,7 @@ export function App() {
     setError("");
     setNotice("");
     try {
-      const { error: createError } = await client.rpc("create_absence_request", {
+      const { data: absenceId, error: createError } = await client.rpc("create_absence_request", {
         p_company_id: activeCompanyId,
         p_type: String(form.get("type") ?? ""),
         p_start_date: String(form.get("start_date") ?? ""),
@@ -1119,9 +1168,32 @@ export function App() {
         setError(createError.message);
         return;
       }
+      if (pendingAbsenceAttachment && absenceId) {
+        const file = pendingAbsenceAttachment;
+        const path = `${activeCompanyId}/${absenceId}/${Date.now()}-${file.name}`;
+        const { error: uploadError } = await client.storage.from(ABSENCE_ATTACHMENT_BUCKET).upload(path, file, {
+          contentType: file.type,
+        });
+        if (uploadError) {
+          setError(uploadError.message);
+          return;
+        }
+        const { error: attachError } = await client.rpc("attach_absence_file", {
+          p_absence_id: absenceId,
+          p_storage_path: path,
+          p_file_name: file.name,
+          p_mime_type: file.type,
+          p_size_bytes: file.size,
+        });
+        if (attachError) {
+          setError(attachError.message);
+          return;
+        }
+      }
       await refreshAbsenceRequests();
       formElement.reset();
       setAbsenceType("VACATION");
+      setPendingAbsenceAttachment(null);
       setNotice("Žiadosť o neprítomnosť bola odoslaná na schválenie.");
     } catch (reason: unknown) {
       setError(errorText(reason));
@@ -1166,6 +1238,16 @@ export function App() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const openAbsenceAttachment = async (path: string) => {
+    if (!client) return;
+    const { data, error: signedError } = await client.storage.from(ABSENCE_ATTACHMENT_BUCKET).createSignedUrl(path, 60 * 10);
+    if (signedError || !data) {
+      setError(signedError?.message ?? "Prílohu sa nepodarilo otvoriť.");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noreferrer");
   };
 
   const adminSetCompanyPlan = async (companyId: string, plan: CompanyPlan) => {
@@ -1249,6 +1331,74 @@ export function App() {
         variableSymbol: company.pending_payment_variable_symbol ?? "",
       });
       setAdminNotice("Upomienka bola odoslaná.");
+    } catch (reason: unknown) {
+      setAdminError(errorText(reason));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const adminSendCustomEmail = async (company: AdminCompanyRow, event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !company.owner_email) return;
+    const form = new FormData(event.currentTarget);
+    const subject = String(form.get("subject") ?? "").trim();
+    const message = String(form.get("message") ?? "").trim();
+    if (subject.length < 2 || message.length < 2) {
+      setAdminError("Vyplňte predmet aj text správy.");
+      return;
+    }
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminNotice("");
+    try {
+      await sendTransactionalEmail(client, "admin_custom", company.owner_email, {
+        companyName: company.name,
+        fullName: company.owner_name ?? "",
+        subject,
+        message,
+      });
+      setAdminNotice(`E-mail bol odoslaný firme ${company.name}.`);
+      setAdminEmailTargetId(null);
+    } catch (reason: unknown) {
+      setAdminError(errorText(reason));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const adminBroadcastMaintenance = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client) return;
+    const form = new FormData(event.currentTarget);
+    const startsAt = String(form.get("starts_at") ?? "");
+    const endsAt = String(form.get("ends_at") ?? "");
+    const reason = String(form.get("reason") ?? "").trim();
+    if (!startsAt || !endsAt) {
+      setAdminError("Vyplňte začiatok aj koniec odstávky.");
+      return;
+    }
+    const recipients = adminCompanies
+      .map((company) => company.owner_email)
+      .filter((email): email is string => Boolean(email));
+    const uniqueRecipients = Array.from(new Set(recipients));
+    if (uniqueRecipients.length === 0) {
+      setAdminError("Zatiaľ nie sú žiadne firmy s e-mailom vlastníka.");
+      return;
+    }
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminNotice("");
+    try {
+      const startsLabel = new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(startsAt));
+      const endsLabel = new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(endsAt));
+      await Promise.all(uniqueRecipients.map((email) => sendTransactionalEmail(client, "maintenance_notice", email, {
+        startsAt: startsLabel,
+        endsAt: endsLabel,
+        reason: reason || undefined,
+      })));
+      setAdminNotice(`Oznámenie o odstávke bolo odoslané ${uniqueRecipients.length} firmám.`);
+      setAdminMaintenanceOpen(false);
     } catch (reason: unknown) {
       setAdminError(errorText(reason));
     } finally {
@@ -1340,6 +1490,76 @@ export function App() {
       setNotice("Výber balíka bol uložený. Neaktivuje platené funkcie ani platbu.");
     }
     setBusy(false);
+  };
+
+  const saveCompanyBillingDetails = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !activeCompanyId || !isManager) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: billingError } = await client.rpc("update_company_billing_details", {
+        p_company_id: activeCompanyId,
+        p_billing_name: billingName,
+        p_billing_ico: billingIco,
+        p_billing_dic: billingDic,
+        p_billing_ic_dph: billingIcDph,
+        p_billing_address: billingAddress,
+      });
+      if (billingError) throw billingError;
+      setMemberships((current) => current.map((membership) =>
+        membership.company_id === activeCompanyId
+          ? { ...membership, company: { ...membership.company, billing_name: billingName || null, billing_ico: billingIco || null, billing_dic: billingDic || null, billing_ic_dph: billingIcDph || null, billing_address: billingAddress || null } }
+          : membership,
+      ));
+      setNotice("Fakturačné údaje boli uložené.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAdditionalCompany = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: createError } = await client.rpc("create_company", { p_name: newCompanyName });
+      if (createError) throw createError;
+      const { data: refreshed, error: refreshError } = await client
+        .from("memberships")
+        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
+        .eq("user_id", session?.user.id ?? "");
+      if (refreshError) throw refreshError;
+      const memberRows = (refreshed ?? []) as Membership[];
+      const { data: companyRows, error: companyError } = await client
+        .from("companies")
+        .select("id, name, plan, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
+        .in("id", memberRows.map((membership) => membership.company_id));
+      if (companyError) throw companyError;
+      const companyById = new Map(((companyRows ?? []) as Company[]).map((company) => [company.id, company]));
+      const workspaces = memberRows.flatMap((membership) => {
+        const company = companyById.get(membership.company_id);
+        return company ? [{ ...membership, company }] : [];
+      });
+      setMemberships(workspaces);
+      setNewCompanyName("");
+      setNotice("Nová firma bola založená.");
+      if (session?.user.email) {
+        void sendTransactionalEmail(client, "company_welcome", session.user.email, {
+          companyName: newCompanyName,
+          fullName: session.user.user_metadata?.full_name ?? "",
+        });
+      }
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const updateWorkOrder = async (event: FormEvent<HTMLFormElement>, workOrderId: string) => {
@@ -1555,7 +1775,7 @@ export function App() {
   );
   const attendanceSummary = useMemo(() => {
     const members = isManager
-      ? roster.filter((member) => member.role === "EMPLOYEE")
+      ? roster.filter((member) => member.role === "EMPLOYEE" && (attendanceEmployeeFilter === "ALL" || member.user_id === attendanceEmployeeFilter))
       : roster.filter((member) => member.user_id === session?.user.id);
     const monthStartDate = new Date(`${attendanceMonth}-01T00:00:00`);
     const monthEndDate = new Date(monthStartDate);
@@ -1578,7 +1798,7 @@ export function App() {
       })
       .filter(({ member, shifts }) => member.active || shifts.length > 0)
       .sort((a, b) => b.totalMilliseconds - a.totalMilliseconds);
-  }, [attendanceBreaks, attendanceNow, isManager, monthAttendanceShifts, roster, session?.user.id]);
+  }, [attendanceBreaks, attendanceEmployeeFilter, attendanceNow, isManager, monthAttendanceShifts, roster, session?.user.id]);
   const monthVehicleTrips = useMemo(
     () => vehicleTrips.filter((trip) => trip.trip_date.slice(0, 7) === tripMonth),
     [tripMonth, vehicleTrips],
@@ -1723,13 +1943,28 @@ export function App() {
       setError("Zadajte miesto odchodu aj cieľ jazdy.");
       return;
     }
+    if (tripRoundTrip && tripDifferentReturn && !tripReturnDestination.trim()) {
+      setError("Zadajte iný cieľ spiatočnej jazdy, alebo zrušte túto voľbu.");
+      return;
+    }
     setTripMapBusy(true);
     setError("");
     setTripNotice("");
     try {
-      const oneWayKm = await openStreetMapRoadDistance(tripOrigin.trim(), tripDestination.trim());
-      const totalKm = tripRoundTrip ? oneWayKm * 2 : oneWayKm;
-      setTripMapDistance(oneWayKm);
+      const validStops = tripStops.map((stop) => stop.trim()).filter((stop) => stop.length > 0);
+      const forwardPoints = [tripOrigin.trim(), ...validStops, tripDestination.trim()];
+      const forwardKm = await openStreetMapMultiLegDistance(forwardPoints);
+      let totalKm = forwardKm;
+      if (tripRoundTrip) {
+        if (tripDifferentReturn && tripReturnDestination.trim()) {
+          await sleep(1100);
+          const returnKm = await openStreetMapRoadDistance(tripDestination.trim(), tripReturnDestination.trim());
+          totalKm = forwardKm + returnKm;
+        } else {
+          totalKm = forwardKm * 2;
+        }
+      }
+      setTripMapDistance(forwardKm);
       setTripDistance(totalKm.toFixed(2));
       setTripDistanceSource("MAP");
       setTripNotice(`Vypočítaná ${tripRoundTrip ? "spiatočná" : "jednosmerná"} cestná trasa: ${totalKm.toFixed(2)} km.`);
@@ -1754,6 +1989,7 @@ export function App() {
     setError("");
     setTripNotice("");
     try {
+      const validStops = tripStops.map((stop) => stop.trim()).filter((stop) => stop.length > 0);
       const { error: saveError } = await client.rpc("create_vehicle_trip", {
         p_company_id: activeCompanyId,
         p_work_order_id: String(form.get("work_order_id") ?? "") || null,
@@ -1765,6 +2001,8 @@ export function App() {
         p_distance_km: distance,
         p_distance_source: tripDistanceSource,
         p_note: String(form.get("note") ?? ""),
+        p_stops: validStops,
+        p_return_destination: tripRoundTrip && tripDifferentReturn && tripReturnDestination.trim() ? tripReturnDestination.trim() : null,
       });
       if (saveError) {
         setError(saveError.message);
@@ -1778,6 +2016,9 @@ export function App() {
       setTripDistance("");
       setTripMapDistance(null);
       setTripDistanceSource("MANUAL");
+      setTripStops([]);
+      setTripReturnDestination("");
+      setTripDifferentReturn(false);
       setTripNotice("Jazda bola zaznamenaná.");
     } catch (reason: unknown) {
       setError(errorText(reason));
@@ -1944,34 +2185,41 @@ export function App() {
     );
   }
 
-  const renderEntryForm = () => (
-    <section className="narrow-page content-page">
-      <button className="back-link button-quiet" onClick={() => { setPage("dashboard"); setEditingEntry(null); setPendingPhotos([]); }}><ArrowLeft size={15} /> Späť na prehľad</button>
-      <header className="page-heading"><span className="heading-icon"><ClipboardList size={20} /></span><div><span className="eyebrow">{editingEntry ? "ÚPRAVA ZÁZNAMU" : "NOVÝ ZÁZNAM"}</span><h1>{editingEntry ? "Upraviť odpracovaný čas" : "Zapísať odpracovaný čas"}</h1><p>Údaje sú viditeľné iba členom firmy {activeMembership?.company.name}.</p></div></header>
-      <form className="panel form-panel form-stack entry-form" onSubmit={(event) => void saveEntry(event)}>
-        <div className="form-grid">
-          <label className="field"><span>Dátum a čas práce</span><input type="datetime-local" name="worked_at" defaultValue={dateTimeLocal(editingEntry?.worked_at)} required /></label>
-          <label className="field"><span>Odpracované hodiny</span><input type="number" name="hours" min="0.25" max="24" step="0.25" defaultValue={editingEntry?.hours ?? ""} placeholder="napr. 7,5" required /></label>
-          <label className="field"><span>Druh práce</span><input name="work_type" minLength={2} maxLength={120} defaultValue={editingEntry?.work_type ?? ""} placeholder="napr. Montáž, servis…" required /></label>
-          <label className="field"><span>Miesto / pracovisko</span><input name="workplace" minLength={2} maxLength={120} defaultValue={editingEntry?.workplace ?? ""} placeholder="napr. Bratislava — Ružinov" required /></label>
-        </div>
-        <label className="field"><span>Poznámka <small>voliteľné</small></span><textarea name="note" rows={4} maxLength={2000} defaultValue={editingEntry?.note ?? ""} placeholder="Doplňujúce informácie k práci…" /></label>
-        <section className="entry-photo-picker">
-          <div className="entry-photo-heading"><span className="photo-hint-icon"><Camera size={17} /></span><span><strong>Fotografie k záznamu</strong><small>JPG, PNG alebo WebP · max. 8 MB na fotografiu · najviac {MAX_PHOTOS}</small></span></div>
-          <label className="button button-outline button-small entry-photo-button"><Plus size={15} /> Vybrať fotografie<input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={choosePhotos} disabled={busy} /></label>
-          {pendingPhotos.length > 0 && <ul className="pending-photo-list">{pendingPhotos.map((photo, index) => <li key={`${photo.name}-${photo.size}-${index}`}><span><Camera size={14} />{photo.name}</span><button type="button" aria-label={`Odstrániť ${photo.name}`} onClick={() => setPendingPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index))}><X size={15} /></button></li>)}</ul>}
-        </section>
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => { setPage("dashboard"); setEditingEntry(null); setPendingPhotos([]); }}>Zrušiť</button><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : editingEntry ? "Uložiť zmeny" : "Uložiť záznam"}</button></div>
-      </form>
-    </section>
-  );
-
   const renderAttendance = () => (
     <section className="content-page">
       <header className="dashboard-title-row">
         <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
+        <button className="button button-outline" onClick={() => { setShowEntryForm((current) => !current); setEditingEntry(null); setPendingPhotos([]); }}>
+          <Plus size={15} /> {showEntryForm ? "Skryť formulár" : "Nový záznam"}
+        </button>
       </header>
+      {showEntryForm && <section className="panel form-panel form-stack entry-form">
+        <header className="page-heading"><span className="heading-icon"><ClipboardList size={20} /></span><div><span className="eyebrow">{editingEntry ? "ÚPRAVA ZÁZNAMU" : "NOVÝ ZÁZNAM"}</span><h2>{editingEntry ? "Upraviť odpracovaný čas" : "Zapísať odpracovaný čas"}</h2><p>Údaje sú viditeľné iba členom firmy {activeMembership?.company.name}.</p></div></header>
+        <form className="form-stack" onSubmit={(event) => void saveEntry(event)}>
+          <div className="form-grid">
+            <label className="field"><span>Dátum a čas práce</span><input type="datetime-local" name="worked_at" defaultValue={dateTimeLocal(editingEntry?.worked_at)} required /></label>
+            <label className="field"><span>Odpracované hodiny</span><input type="number" name="hours" min="0.25" max="24" step="0.25" defaultValue={editingEntry?.hours ?? ""} placeholder="napr. 7,5" required /></label>
+            <label className="field"><span>Druh práce</span><input name="work_type" minLength={2} maxLength={120} defaultValue={editingEntry?.work_type ?? ""} placeholder="napr. Montáž, servis…" required /></label>
+            <label className="field"><span>Miesto / pracovisko</span><input name="workplace" minLength={2} maxLength={120} defaultValue={editingEntry?.workplace ?? ""} placeholder="napr. Bratislava — Ružinov" required /></label>
+          </div>
+          <label className="field"><span>Poznámka <small>voliteľné</small></span><textarea name="note" rows={4} maxLength={2000} defaultValue={editingEntry?.note ?? ""} placeholder="Doplňujúce informácie k práci…" /></label>
+          <section className="entry-photo-picker">
+            <div className="entry-photo-heading"><span className="photo-hint-icon"><Camera size={17} /></span><span><strong>Fotografie k záznamu</strong><small>JPG, PNG alebo WebP · max. 8 MB na fotografiu · najviac {MAX_PHOTOS}</small></span></div>
+            <label className="button button-outline button-small entry-photo-button"><Plus size={15} /> Vybrať fotografie<input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={choosePhotos} disabled={busy} /></label>
+            {pendingPhotos.length > 0 && <ul className="pending-photo-list">{pendingPhotos.map((photo, index) => <li key={`${photo.name}-${photo.size}-${index}`}><span><Camera size={14} />{photo.name}</span><button type="button" aria-label={`Odstrániť ${photo.name}`} onClick={() => setPendingPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index))}><X size={15} /></button></li>)}</ul>}
+          </section>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => { setShowEntryForm(false); setEditingEntry(null); setPendingPhotos([]); }}>Zrušiť</button><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : editingEntry ? "Uložiť zmeny" : "Uložiť záznam"}</button></div>
+        </form>
+      </section>}
+      {isManager && <section className="panel">
+        <label className="field"><span>Zobraziť dochádzku zamestnanca</span>
+          <select value={attendanceEmployeeFilter} onChange={(event) => setAttendanceEmployeeFilter(event.target.value)}>
+            <option value="ALL">Všetci zamestnanci</option>
+            {roster.filter((member) => member.role === "EMPLOYEE").map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}
+          </select>
+        </label>
+      </section>}
       <section className={`panel attendance-clock ${activeShift ? "attendance-clock-running" : ""}`}>
         <div className="attendance-clock-copy">
           <span className="eyebrow">PRACOVNÁ ZMENA</span>
@@ -2075,6 +2323,59 @@ export function App() {
               </div>}
             </div>;
           })}</div>}
+      </section>
+      <section className="panel work-order-create-panel">
+        <div className="panel-heading"><div><h2><Palmtree size={17} /> Nahlásiť neprítomnosť</h2><p>Dovolenka, home office alebo iná neprítomnosť čaká na schválenie vedením.</p></div></div>
+        <form className="form-stack work-order-form" onSubmit={(event) => void createAbsenceRequest(event)}>
+          <div className="form-grid">
+            <label className="field"><span>Typ neprítomnosti</span><select name="type" value={absenceType} onChange={(event) => setAbsenceType(event.target.value as AbsenceType)} required>
+              {(Object.keys(ABSENCE_TYPE_LABELS) as AbsenceType[]).map((type) => <option key={type} value={type}>{ABSENCE_TYPE_LABELS[type]}</option>)}
+            </select></label>
+            <label className="field"><span>Od</span><input type="date" name="start_date" required /></label>
+            <label className="field"><span>Do</span><input type="date" name="end_date" required /></label>
+          </div>
+          <label className="field"><span>Poznámka {absenceType === "OTHER" ? <small>povinné pri type „Iné“</small> : <small>voliteľné</small>}</span><textarea name="note" rows={2} maxLength={1000} placeholder="Doplňujúca informácia…" required={absenceType === "OTHER"} /></label>
+          <label className="field"><span>Príloha <small>voliteľné, napr. potvrdenie od lekára</small></span><input type="file" accept="image/*,application/pdf" onChange={(event) => setPendingAbsenceAttachment(event.target.files?.[0] ?? null)} disabled={busy} /></label>
+          {pendingAbsenceAttachment && <p className="muted">Vybraná príloha: {pendingAbsenceAttachment.name}</p>}
+          {error && <p className="form-error" role="alert">{error}</p>}
+          {notice && <p className="invite-success" role="status">{notice}</p>}
+          <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Odosielam…" : "Odoslať žiadosť"}</button></div>
+        </form>
+      </section>
+      <section className="records-section">
+        <div className="section-title-row"><div><h2><ClipboardList size={17} /> Neprítomnosti</h2><p>{isManager ? "Žiadosti celého tímu." : "Vaše žiadosti o neprítomnosť."}</p></div><span className="count-pill">{(isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id)).length} žiadostí</span></div>
+        {(() => {
+          const visibleAbsences = (isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id))
+            .slice()
+            .sort((a, b) => (a.status === "PENDING") === (b.status === "PENDING") ? b.start_date.localeCompare(a.start_date) : a.status === "PENDING" ? -1 : 1);
+          if (visibleAbsences.length === 0) {
+            return <div className="panel empty-state"><span className="soft-icon"><Palmtree size={19} /></span><strong>Zatiaľ žiadne žiadosti o neprítomnosť</strong><p>{isManager ? "Keď niekto nahlási neprítomnosť, zobrazí sa tu." : "Nahláste dovolenku, home office alebo inú neprítomnosť vyššie."}</p></div>;
+          }
+          return <div className="work-order-list">{visibleAbsences.map((request) => {
+            const member = roster.find((person) => person.user_id === request.user_id);
+            const AbsenceIcon = ABSENCE_TYPE_ICONS[request.type];
+            return <article className="panel work-order-card" id={`absence-${request.id}`} key={request.id}>
+              <div className="work-order-heading">
+                <div><span className="eyebrow">NEPRÍTOMNOSŤ</span><h2><AbsenceIcon size={16} /> {ABSENCE_TYPE_LABELS[request.type]}</h2></div>
+                <span className={`status-pill status-${request.status.toLowerCase()}`}>{absenceStatusName(request.status)}</span>
+              </div>
+              <div className="work-order-meta">
+                {isManager && <span><Users size={14} />{member?.full_name || member?.email || "Bývalý zamestnanec"}</span>}
+                <span><Clock3 size={14} />{dateLabel(`${request.start_date}T12:00:00`)} – {dateLabel(`${request.end_date}T12:00:00`)}</span>
+              </div>
+              {request.note && <p className="work-order-description">{request.note}</p>}
+              {request.review_note && <p className="work-order-description"><b>Poznámka vedenia:</b> {request.review_note}</p>}
+              {request.attachment_path && <button type="button" className="button button-outline button-small" onClick={() => void openAbsenceAttachment(request.attachment_path!)}><Paperclip size={13} /> {request.attachment_file_name || "Príloha"}</button>}
+              {isManager && request.status === "PENDING" && <div className="absence-actions">
+                <button className="button button-primary button-small" disabled={busy} onClick={() => void reviewAbsenceRequest(request.id, "APPROVED")}>Schváliť</button>
+                <button className="button button-outline button-small" disabled={busy} onClick={() => void reviewAbsenceRequest(request.id, "REJECTED")}>Zamietnuť</button>
+              </div>}
+              {!isManager && request.status === "PENDING" && <div className="absence-actions">
+                <button className="button button-outline button-small" disabled={busy} onClick={() => void cancelAbsenceRequest(request.id)}>Zrušiť žiadosť</button>
+              </div>}
+            </article>;
+          })}</div>;
+        })()}
       </section>
     </section>
   );
@@ -2251,56 +2552,6 @@ export function App() {
               </article>;
             })}</div>}
         </section>
-        <section className="panel work-order-create-panel">
-          <div className="panel-heading"><div><h2><Palmtree size={17} /> Nahlásiť neprítomnosť</h2><p>Dovolenka, home office alebo iná neprítomnosť čaká na schválenie vedením.</p></div></div>
-          <form className="form-stack work-order-form" onSubmit={(event) => void createAbsenceRequest(event)}>
-            <div className="form-grid">
-              <label className="field"><span>Typ neprítomnosti</span><select name="type" value={absenceType} onChange={(event) => setAbsenceType(event.target.value as AbsenceType)} required>
-                {(Object.keys(ABSENCE_TYPE_LABELS) as AbsenceType[]).map((type) => <option key={type} value={type}>{ABSENCE_TYPE_LABELS[type]}</option>)}
-              </select></label>
-              <label className="field"><span>Od</span><input type="date" name="start_date" required /></label>
-              <label className="field"><span>Do</span><input type="date" name="end_date" required /></label>
-            </div>
-            <label className="field"><span>Poznámka {absenceType === "OTHER" ? <small>povinné pri type „Iné“</small> : <small>voliteľné</small>}</span><textarea name="note" rows={2} maxLength={1000} placeholder="Doplňujúca informácia…" required={absenceType === "OTHER"} /></label>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            {notice && <p className="invite-success" role="status">{notice}</p>}
-            <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Odosielam…" : "Odoslať žiadosť"}</button></div>
-          </form>
-        </section>
-        <section className="records-section">
-          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Neprítomnosti</h2><p>{isManager ? "Žiadosti celého tímu." : "Vaše žiadosti o neprítomnosť."}</p></div><span className="count-pill">{(isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id)).length} žiadostí</span></div>
-          {(() => {
-            const visibleAbsences = (isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id))
-              .slice()
-              .sort((a, b) => (a.status === "PENDING") === (b.status === "PENDING") ? b.start_date.localeCompare(a.start_date) : a.status === "PENDING" ? -1 : 1);
-            if (visibleAbsences.length === 0) {
-              return <div className="panel empty-state"><span className="soft-icon"><Palmtree size={19} /></span><strong>Zatiaľ žiadne žiadosti o neprítomnosť</strong><p>{isManager ? "Keď niekto nahlási neprítomnosť, zobrazí sa tu." : "Nahláste dovolenku, home office alebo inú neprítomnosť vyššie."}</p></div>;
-            }
-            return <div className="work-order-list">{visibleAbsences.map((request) => {
-              const member = roster.find((person) => person.user_id === request.user_id);
-              const AbsenceIcon = ABSENCE_TYPE_ICONS[request.type];
-              return <article className="panel work-order-card" id={`absence-${request.id}`} key={request.id}>
-                <div className="work-order-heading">
-                  <div><span className="eyebrow">NEPRÍTOMNOSŤ</span><h2><AbsenceIcon size={16} /> {ABSENCE_TYPE_LABELS[request.type]}</h2></div>
-                  <span className={`status-pill status-${request.status.toLowerCase()}`}>{absenceStatusName(request.status)}</span>
-                </div>
-                <div className="work-order-meta">
-                  {isManager && <span><Users size={14} />{member?.full_name || member?.email || "Bývalý zamestnanec"}</span>}
-                  <span><Clock3 size={14} />{dateLabel(`${request.start_date}T12:00:00`)} – {dateLabel(`${request.end_date}T12:00:00`)}</span>
-                </div>
-                {request.note && <p className="work-order-description">{request.note}</p>}
-                {request.review_note && <p className="work-order-description"><b>Poznámka vedenia:</b> {request.review_note}</p>}
-                {isManager && request.status === "PENDING" && <div className="absence-actions">
-                  <button className="button button-primary button-small" disabled={busy} onClick={() => void reviewAbsenceRequest(request.id, "APPROVED")}>Schváliť</button>
-                  <button className="button button-outline button-small" disabled={busy} onClick={() => void reviewAbsenceRequest(request.id, "REJECTED")}>Zamietnuť</button>
-                </div>}
-                {!isManager && request.status === "PENDING" && <div className="absence-actions">
-                  <button className="button button-outline button-small" disabled={busy} onClick={() => void cancelAbsenceRequest(request.id)}>Zrušiť žiadosť</button>
-                </div>}
-              </article>;
-            })}</div>;
-          })()}
-        </section>
       </section>
     );
   };
@@ -2343,11 +2594,39 @@ export function App() {
           <label className="checkbox-line trip-roundtrip"><input type="checkbox" checked={tripRoundTrip} onChange={(event) => {
             const nextRoundTrip = event.target.checked;
             setTripRoundTrip(nextRoundTrip);
+            if (!nextRoundTrip) { setTripDifferentReturn(false); setTripReturnDestination(""); }
             if (tripMapDistance !== null && (tripDistanceSource === "MAP" || tripDistanceSource === "MAP_EDITED")) {
               setTripDistance((nextRoundTrip ? tripMapDistance * 2 : tripMapDistance).toFixed(2));
               setTripDistanceSource("MAP");
             }
           }} disabled={tripMapBusy} /><span>Spiatočná jazda (návrat na miesto odchodu)</span></label>
+          {tripRoundTrip && <label className="checkbox-line trip-roundtrip"><input type="checkbox" checked={tripDifferentReturn} onChange={(event) => {
+            setTripDifferentReturn(event.target.checked);
+            setTripMapDistance(null);
+            setTripDistanceSource("MANUAL");
+            setTripDistance("");
+          }} disabled={tripMapBusy} /><span>Pri návrate iný cieľ ako miesto odchodu</span></label>}
+          {tripRoundTrip && tripDifferentReturn && <label className="field"><span>Cieľ spiatočnej jazdy</span><input value={tripReturnDestination} onChange={(event) => {
+            setTripReturnDestination(event.target.value);
+            setTripMapDistance(null);
+            setTripDistanceSource("MANUAL");
+            setTripDistance("");
+          }} disabled={tripMapBusy} minLength={2} maxLength={250} placeholder="napr. sídlo firmy" /></label>}
+          <section className="entry-photo-picker">
+            <div className="entry-photo-heading"><span><strong>Zastávky na trase</strong><small>voliteľné, najviac 10</small></span></div>
+            {tripStops.map((stop, index) => <div className="form-grid" key={`stop-${index}`}>
+              <label className="field"><span>Zastávka {index + 1}</span><input value={stop} onChange={(event) => {
+                const next = [...tripStops];
+                next[index] = event.target.value;
+                setTripStops(next);
+                setTripMapDistance(null);
+                setTripDistanceSource("MANUAL");
+                setTripDistance("");
+              }} disabled={tripMapBusy} minLength={2} maxLength={250} /></label>
+              <button type="button" className="button button-outline button-small" onClick={() => setTripStops((current) => current.filter((_, stopIndex) => stopIndex !== index))} disabled={tripMapBusy}><X size={14} /> Odstrániť</button>
+            </div>)}
+            {tripStops.length < 10 && <button type="button" className="button button-outline button-small" onClick={() => setTripStops((current) => [...current, ""])} disabled={tripMapBusy}><Plus size={14} /> Pridať zastávku</button>}
+          </section>
           <div className="trip-map-controls">
             <button type="button" className="button button-outline" disabled={tripMapBusy || busy} onClick={() => void calculateVehicleTripRoute()}>
               <MapPin size={15} />{tripMapBusy ? "Počítam trasu…" : "Vypočítať trasu cez OpenStreetMap"}
@@ -2378,7 +2657,7 @@ export function App() {
             const order = workOrders.find((item) => item.id === trip.work_order_id);
             return <article className="panel trip-card" key={trip.id}>
               <div className="trip-card-heading"><strong>{dateLabel(`${trip.trip_date}T12:00:00`)}</strong><strong>{hoursLabel(Number(trip.distance_km))} km</strong></div>
-              <p>{trip.origin} <ArrowRight size={14} /> {trip.destination}</p>
+              <p>{trip.origin} {trip.stops?.map((stop, index) => <span key={index}><ArrowRight size={14} /> {stop} </span>)}<ArrowRight size={14} /> {trip.destination}{trip.return_destination && <><ArrowRight size={14} /> {trip.return_destination}</>}</p>
               <div className="trip-card-footer"><span>{trip.is_round_trip ? "Spiatočná jazda" : "Jednosmerná jazda"} · {trip.distance_source === "MANUAL" ? "Zadané ručne" : trip.distance_source === "MAP_EDITED" ? "Mapa · ručne upravené" : "OpenStreetMap"}</span>{order && <span>{order.title}</span>}</div>
               {trip.note && <small>{trip.note}</small>}
             </article>;
@@ -2492,6 +2771,28 @@ export function App() {
         <div className="form-actions"><button className="button button-primary" disabled={busy || !profileSelectedPlan || profileSelectedPlan === activeMembership?.company.selected_plan} onClick={() => void saveCompanyPlanSelection()}>{busy ? "Ukladám…" : "Uložiť výber balíka"}</button></div>
         <p className="pricing-proposal-note">Platba kartou cez GoPay bude doplnená po aktivácii platobnej brány. Uložený výber nemení aktuálny technický plán.</p>
       </section>}
+      {activeMembership?.role === "OWNER" && <section className="panel form-panel form-stack">
+        <div className="panel-heading"><div><h2><Building2 size={17} /> Fakturačné údaje firmy</h2><p>Údaje sa použijú na vystavenie faktúry za licenciu.</p></div></div>
+        <form className="form-stack" onSubmit={(event) => void saveCompanyBillingDetails(event)}>
+          <div className="form-grid">
+            <label className="field"><span>Fakturačný názov firmy</span><input value={billingName} onChange={(event) => setBillingName(event.target.value)} maxLength={160} placeholder="Obchodné meno s.r.o." /></label>
+            <label className="field"><span>IČO</span><input value={billingIco} onChange={(event) => setBillingIco(event.target.value)} maxLength={20} /></label>
+            <label className="field"><span>DIČ</span><input value={billingDic} onChange={(event) => setBillingDic(event.target.value)} maxLength={20} /></label>
+            <label className="field"><span>IČ DPH <small>voliteľné</small></span><input value={billingIcDph} onChange={(event) => setBillingIcDph(event.target.value)} maxLength={20} /></label>
+          </div>
+          <label className="field"><span>Fakturačná adresa</span><textarea rows={2} value={billingAddress} onChange={(event) => setBillingAddress(event.target.value)} maxLength={300} placeholder="Ulica, mesto, PSČ" /></label>
+          <div className="form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : "Uložiť fakturačné údaje"}</button></div>
+        </form>
+      </section>}
+      {activeMembership?.role === "OWNER" && <section className="panel form-panel form-stack">
+        <div className="panel-heading"><div><h2><Plus size={17} /> Pridať ďalšiu firmu</h2><p>Maximálny počet firiem podľa balíka: Free a Basic {PLAN_COMPANY_LIMIT.FREE}, Pro {PLAN_COMPANY_LIMIT.PRO}, Team {PLAN_COMPANY_LIMIT.TEAM}. Aktuálny balík: {COMPANY_PLAN_LABELS[activeMembership.company.plan]} (max. {PLAN_EMPLOYEE_LIMIT[activeMembership.company.plan] ?? "neobmedzene"} zamestnancov). Na ďalšiu firmu nad rámec balíka Free bude potrebná zodpovedajúca licencia.</p></div></div>
+        <form className="form-stack" onSubmit={(event) => void createAdditionalCompany(event)}>
+          <label className="field"><span>Názov novej firmy</span><input value={newCompanyName} onChange={(event) => setNewCompanyName(event.target.value)} minLength={2} maxLength={120} placeholder="napr. Workena s.r.o. — pobočka" required /></label>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          {notice && <p className="invite-success" role="status">{notice}</p>}
+          <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Zakladám…" : "Založiť firmu"}</button></div>
+        </form>
+      </section>}
     </section>
   );
 
@@ -2500,6 +2801,19 @@ export function App() {
       <header className="dashboard-title-row"><div><span className="eyebrow">SPRÁVA PLATFORMY</span><h1>Administrácia</h1><p>Prehľad všetkých zaevidovaných firiem a správa licencií.</p></div><span className="count-pill">{adminCompanies.length} firiem</span></header>
       {adminNotice && <p className="invite-success" role="status">{adminNotice}</p>}
       {adminError && <p className="form-error" role="alert">{adminError}</p>}
+      <section className="panel form-panel form-stack">
+        <div className="panel-heading"><div><h2><CalendarDays size={17} /> Odstávka kvôli aktualizácii</h2><p>Pošle e-mail všetkým firmám s vyplneným e-mailom vlastníka.</p></div></div>
+        {adminMaintenanceOpen
+          ? <form className="form-stack" onSubmit={(event) => void adminBroadcastMaintenance(event)}>
+            <div className="form-grid">
+              <label className="field"><span>Od</span><input type="datetime-local" name="starts_at" required /></label>
+              <label className="field"><span>Do</span><input type="datetime-local" name="ends_at" required /></label>
+            </div>
+            <label className="field"><span>Dôvod <small>voliteľné</small></span><textarea name="reason" rows={2} maxLength={500} placeholder="napr. Aktualizácia a opravy aplikácie" /></label>
+            <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setAdminMaintenanceOpen(false)}>Zrušiť</button><button className="button button-primary" disabled={adminBusy}>{adminBusy ? "Odosielam…" : "Odoslať všetkým firmám"}</button></div>
+          </form>
+          : <button className="button button-outline" onClick={() => setAdminMaintenanceOpen(true)}>Naplánovať odstávku</button>}
+      </section>
       {adminCompanies.length === 0
         ? <div className="panel empty-state"><span className="soft-icon"><Building2 size={19} /></span><strong>Zatiaľ tu nie sú žiadne firmy</strong><p>Keď si niekto založí firemný priestor, zobrazí sa tu.</p></div>
         : <div className="work-order-list">{adminCompanies.map((company) => <article className="panel work-order-card" key={company.company_id}>
@@ -2528,8 +2842,14 @@ export function App() {
               <option value="PRO">Pro</option>
               <option value="TEAM">Team</option>
             </select></label>
+            <button className="button button-outline button-small" disabled={!company.owner_email} onClick={() => setAdminEmailTargetId((current) => current === company.company_id ? null : company.company_id)}>Poslať e-mail firme</button>
             <button className="button button-danger button-small" disabled={adminBusy} onClick={() => void adminDeleteCompany(company.company_id, company.name)}>Vymazať firmu</button>
           </div>
+          {adminEmailTargetId === company.company_id && <form className="form-stack" onSubmit={(event) => void adminSendCustomEmail(company, event)}>
+            <label className="field"><span>Predmet</span><input name="subject" minLength={2} maxLength={200} required /></label>
+            <label className="field"><span>Text správy</span><textarea name="message" rows={4} minLength={2} maxLength={4000} required /></label>
+            <div className="form-actions"><button type="button" className="button button-quiet button-small" onClick={() => setAdminEmailTargetId(null)}>Zrušiť</button><button className="button button-primary button-small" disabled={adminBusy}>{adminBusy ? "Odosielam…" : "Odoslať e-mail"}</button></div>
+          </form>}
         </article>)}</div>}
     </section>
   );
@@ -2570,19 +2890,39 @@ export function App() {
           <article className="panel pricing-proposal-card">
             <div><span className="pricing-proposal-name">Basic</span><strong>19 €<small> / mes.</small></strong></div>
             <p>Zamestnanci, úlohy a základná evidencia.</p>
-            <button className="button button-outline button-small" onClick={() => void createPaymentRequest("BASIC")} disabled={busy}>Zobraziť platobné údaje</button>
+            <p className="muted"><small>{PLAN_FEATURE_NOTES.BASIC}</small></p>
+            <button className="button button-outline button-small" onClick={() => setPreviewPlan("BASIC")} disabled={busy}>Zobraziť platobné údaje</button>
           </article>
           <article className="panel pricing-proposal-card pricing-proposal-featured">
             <div><span className="pricing-proposal-name">Pro</span><strong>39 €<small> / mes.</small></strong></div>
             <p>Dochádzka, výkazy, exporty a reporty.</p>
-            <button className="button button-outline button-small" onClick={() => void createPaymentRequest("PRO")} disabled={busy}>Zobraziť platobné údaje</button>
+            <p className="muted"><small>{PLAN_FEATURE_NOTES.PRO}</small></p>
+            <button className="button button-outline button-small" onClick={() => setPreviewPlan("PRO")} disabled={busy}>Zobraziť platobné údaje</button>
           </article>
           <article className="panel pricing-proposal-card">
             <div><span className="pricing-proposal-name">Team</span><strong>69 €<small> / mes.</small></strong></div>
             <p>Viac tímov, zákazky, pokročilé reporty a oprávnenia.</p>
-            <button className="button button-outline button-small" onClick={() => void createPaymentRequest("TEAM")} disabled={busy}>Zobraziť platobné údaje</button>
+            <p className="muted"><small>{PLAN_FEATURE_NOTES.TEAM}</small></p>
+            <button className="button button-outline button-small" onClick={() => setPreviewPlan("TEAM")} disabled={busy}>Zobraziť platobné údaje</button>
           </article>
         </div>
+        {previewPlan && <section className="panel payment-instructions">
+          <div className="payment-instructions-copy">
+            <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[previewPlan].name.toUpperCase()}</span>
+            <h3>Platobné údaje pre plán {PAYMENT_PLAN_DETAILS[previewPlan].name}</h3>
+            <p>Toto je iba náhľad platobných údajov. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
+            <dl>
+              <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
+              <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
+              <div><dt>Suma za 1 mesiac</dt><dd>{PAYMENT_PLAN_DETAILS[previewPlan].amount.toFixed(2).replace(".", ",")} €</dd></div>
+              <div><dt>Správa</dt><dd>Workena {PAYMENT_PLAN_DETAILS[previewPlan].name}</dd></div>
+            </dl>
+          </div>
+          <div className="form-actions">
+            <button className="button button-quiet" onClick={() => setPreviewPlan("")}>Zavrieť náhľad</button>
+            <button className="button button-primary" disabled={busy} onClick={() => void createPaymentRequest(previewPlan)}>Požiadať o licenciu</button>
+          </div>
+        </section>}
         {selectedPaymentRequest && <section className="panel payment-instructions">
           <div className="payment-instructions-copy">
             <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name.toUpperCase()}</span>
@@ -2687,7 +3027,6 @@ export function App() {
           <button className={`nav-link ${page === "attendance" ? "active" : ""}`} onClick={() => { setPage("attendance"); setError(""); }}><Clock3 size={18} /> Dochádzka</button>
           <button className={`nav-link ${page === "workOrders" ? "active" : ""}`} onClick={() => { setPage("workOrders"); setError(""); setNotice(""); }}><ClipboardList size={18} /> Zákazky</button>
           <button className={`nav-link ${page === "trips" ? "active" : ""}`} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}><MapPin size={18} /> Výkaz jázd</button>
-          <button className={`nav-link ${page === "entry" ? "active" : ""}`} onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}><ClipboardList size={18} /> Nový záznam</button>
           {isManager && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
           {isManager && <button className={`nav-link ${page === "history" ? "active" : ""}`} onClick={() => setPage("history")}><History size={18} /> História</button>}
@@ -2723,9 +3062,9 @@ export function App() {
                 <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
               </form>
             </section>
-          ) : page === "entry" ? renderEntryForm() : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
+          ) : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
             <div className="content-page">
-              <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}><Plus size={16} /> Nový záznam</button></header>
+              <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}><Plus size={16} /> Nový záznam</button></header>
               <section className={`panel attendance-clock attendance-clock-compact ${activeShift ? "attendance-clock-running" : ""}`}>
                 <div className="attendance-clock-copy">
                   <span className="eyebrow">PRACOVNÁ ZMENA</span>
@@ -2837,7 +3176,7 @@ export function App() {
               {error && <p className="form-error" role="alert">{error}</p>}
               <section className="records-section">
                 <div className="section-title-row"><div><h2><ClipboardList size={17} /> Pracovné záznamy</h2><p>{isManager ? "Záznamy dostupné členom tejto firmy." : "Vaše pracovné záznamy."}</p></div><span className="count-pill">{visibleEntries.length} záznamov</span></div>
-                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p><button className="button button-primary button-small" onClick={() => setPage("entry")}><Plus size={15} /> Nový záznam</button></div> : (
+                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p><button className="button button-primary button-small" onClick={() => { setShowEntryForm(true); setPage("attendance"); }}><Plus size={15} /> Nový záznam</button></div> : (
                   <div className="record-list">{visibleEntries.map((entry) => {
                     const author = roster.find((member) => member.user_id === entry.user_id);
                     return <article className="record-card" key={entry.id}>
@@ -2868,7 +3207,7 @@ export function App() {
           <button className={`mobile-nav-link ${page === "trips" ? "active" : ""}`} aria-current={page === "trips" ? "page" : undefined} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}>
             <MapPin size={19} /><span>Jazdy</span>
           </button>
-          <button className={`mobile-nav-link ${page === "entry" ? "active" : ""}`} aria-current={page === "entry" ? "page" : undefined} onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}>
+          <button className={`mobile-nav-link ${page === "attendance" && showEntryForm ? "active" : ""}`} aria-current={page === "attendance" && showEntryForm ? "page" : undefined} onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}>
             <Plus size={20} /><span>Nový záznam</span>
           </button>
           {isManager && <button className={`mobile-nav-link ${page === "team" ? "active" : ""}`} aria-current={page === "team" ? "page" : undefined} onClick={() => setPage("team")}>
@@ -2970,7 +3309,7 @@ export function App() {
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="detail-actions">
             {isManager && selectedEntry.status === "PENDING" && <><button className="button button-outline button-small" disabled={busy} onClick={() => void changeReview(selectedEntry, "REJECTED")}>Vrátiť na opravu</button><button className="button button-primary button-small" disabled={busy} onClick={() => void changeReview(selectedEntry, "APPROVED")}><CheckCircle2 size={15} /> Schváliť</button></>}
-            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-outline button-small" disabled={busy} onClick={() => { setEditingEntry(selectedEntry); setPendingPhotos([]); setSelectedId(null); setPage("entry"); setError(""); }}><Pencil size={14} /> Upraviť</button>}
+            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-outline button-small" disabled={busy} onClick={() => { setEditingEntry(selectedEntry); setPendingPhotos([]); setSelectedId(null); setShowEntryForm(true); setPage("attendance"); setError(""); }}><Pencil size={14} /> Upraviť</button>}
             {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-danger button-small" disabled={busy} onClick={() => void removeEntry(selectedEntry)}><Trash2 size={14} /> Odstrániť</button>}
           </div>
         </section>
