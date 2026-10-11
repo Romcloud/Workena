@@ -1118,6 +1118,24 @@ export function App() {
     }
   };
 
+  const deleteAttendanceShift = async (shiftId: string) => {
+    if (!client || !window.confirm("Naozaj chcete vymazať tento dochádzkový záznam?")) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: deleteError } = await client.rpc("delete_attendance_shift", { p_shift_id: shiftId });
+      if (deleteError) throw deleteError;
+      if (editingAttendanceShift?.id === shiftId) setEditingAttendanceShift(null);
+      await refreshAttendance();
+      setNotice("Dochádzkový záznam bol vymazaný.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client) return;
@@ -1873,6 +1891,11 @@ export function App() {
                             setError("");
                           }}
                         ><Pencil size={13} /> Upraviť</button>}
+                        {!shift.source_work_entry_id && (isManager || shift.user_id === session?.user.id) && <button
+                          className="button button-outline button-small"
+                          disabled={busy}
+                          onClick={() => void deleteAttendanceShift(shift.id)}
+                        ><Trash2 size={13} /> Vymazať</button>}
                       </div>
                       {editingAttendanceShift?.id === shift.id && <div className="attendance-edit-form">
                         <label className="field"><span>Začiatok</span><input type="datetime-local" value={editingAttendanceShift.startedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, startedAt: event.target.value })} required /></label>
