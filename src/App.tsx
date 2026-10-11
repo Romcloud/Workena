@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  CalendarDays,
   Camera,
   CheckCircle2,
   Clock3,
@@ -27,11 +28,11 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
+import type { AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "terms";
+type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "profile" | "terms";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
@@ -188,11 +189,15 @@ export function App() {
   const [tripMapBusy, setTripMapBusy] = useState(false);
   const [tripNotice, setTripNotice] = useState("");
   const [attendanceMonth, setAttendanceMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
+  const [workOrderMonth, setWorkOrderMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
   const [reportEmployeeId, setReportEmployeeId] = useState("ALL");
   const [reportDataType, setReportDataType] = useState<"ALL" | "ATTENDANCE" | "TRIPS" | "WORK_ORDERS">("ALL");
   const [attendanceNow, setAttendanceNow] = useState(Date.now());
   const [page, setPage] = useState<Page>(() => window.location.hash === "#obchodne-podmienky" ? "terms" : "dashboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
+  const [profileFullName, setProfileFullName] = useState("");
+  const [profileSelectedPlan, setProfileSelectedPlan] = useState<PaymentPlan | "">("");
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
@@ -202,7 +207,6 @@ export function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const attendanceRequest = useRef(0);
-  const attendanceAutoStartKeys = useRef(new Set<string>());
   const workOrderRequest = useRef(0);
   const workOrdersCompany = useRef("");
   const workOrderPhotosRequest = useRef(0);
@@ -230,14 +234,20 @@ export function App() {
   const client = supabase;
 
   useEffect(() => {
+    setProfileFullName(profileName);
+    setProfileSelectedPlan(activeMembership?.company.selected_plan ?? "");
+  }, [activeCompanyId, profileName, activeMembership?.company.selected_plan]);
+
+  useEffect(() => {
     if (!client) {
       setAuthReady(true);
       return;
     }
 
     let alive = true;
-    const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = client.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
+      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT") return;
       setMemberships([]);
       setCompanyId("");
       setEntries([]);
@@ -291,7 +301,7 @@ export function App() {
       }
       const { data: companyRows, error: companyError } = await client
         .from("companies")
-        .select("id, name, plan")
+        .select("id, name, plan, selected_plan")
         .in("id", memberList.map((member) => member.company_id));
       if (!alive) return;
       if (companyError) {
@@ -404,7 +414,22 @@ export function App() {
       .order("created_at", { ascending: false });
     if (request !== workOrderRequest.current) return;
     if (workOrdersError) throw workOrdersError;
-    setWorkOrders((data ?? []) as WorkOrder[]);
+    const orders = (data ?? []) as WorkOrder[];
+    if (orders.length === 0) {
+      setWorkOrders([]);
+      return;
+    }
+    const { data: assignmentRows, error: assignmentError } = await client
+      .from("work_order_assignees")
+      .select("work_order_id, company_id, user_id, accepted_at, created_at")
+      .in("work_order_id", orders.map((order) => order.id));
+    if (request !== workOrderRequest.current) return;
+    if (assignmentError) throw assignmentError;
+    const assignments = (assignmentRows ?? []) as WorkOrderAssignment[];
+    setWorkOrders(orders.map((order) => ({
+      ...order,
+      assignees: assignments.filter((assignment) => assignment.work_order_id === order.id),
+    })));
   }, [activeCompanyId, client]);
 
   const refreshWorkOrderPhotos = useCallback(async () => {
@@ -523,35 +548,6 @@ export function App() {
   }, [refreshAttendance]);
 
   useEffect(() => {
-    if (!session) {
-      attendanceAutoStartKeys.current.clear();
-      return;
-    }
-    if (!client || activeMembership?.role !== "EMPLOYEE" || !activeMembership.active) return;
-
-    const autoStartKey = `${session.user.id}:${activeCompanyId}`;
-    if (attendanceAutoStartKeys.current.has(autoStartKey)) return;
-    attendanceAutoStartKeys.current.add(autoStartKey);
-
-    let alive = true;
-    void (async () => {
-      try {
-        const { error: startError } = await client.rpc("start_attendance", { p_company_id: activeCompanyId });
-        if (startError) throw startError;
-        if (!alive) return;
-        await refreshAttendance();
-      } catch (reason: unknown) {
-        attendanceAutoStartKeys.current.delete(autoStartKey);
-        if (alive) setError(errorText(reason));
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [activeCompanyId, activeMembership?.role, client, refreshAttendance, session]);
-
-  useEffect(() => {
     void refreshWorkOrders().catch((reason: unknown) => setError(errorText(reason)));
   }, [refreshWorkOrders]);
 
@@ -644,7 +640,7 @@ export function App() {
         const memberRows = (refreshed ?? []) as Membership[];
         const { data: companyRows, error: companyError } = await client
           .from("companies")
-          .select("id, name, plan")
+          .select("id, name, plan, selected_plan")
           .in("id", memberRows.map((membership) => membership.company_id));
         if (companyError) setError(companyError.message);
         else {
@@ -931,13 +927,14 @@ export function App() {
     if (!client || !activeCompanyId) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const assigneeIds = form.getAll("assignee_ids").map(String).filter(Boolean);
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const { error: createError } = await client.rpc("create_work_order", {
+      const { error: createError } = await client.rpc("create_work_order_multi", {
         p_company_id: activeCompanyId,
-        p_assignee_id: String(form.get("assignee_id") ?? ""),
+        p_assignee_ids: assigneeIds,
         p_title: String(form.get("title") ?? ""),
         p_address: String(form.get("address") ?? ""),
         p_due_date: String(form.get("due_date") ?? ""),
@@ -949,12 +946,99 @@ export function App() {
       }
       await refreshWorkOrders();
       formElement.reset();
-      setNotice("Zákazka bola priradená pracovníkovi.");
+      setNotice("Zákazka bola priradená vybraným zamestnancom. Po prijatí sa zobrazí jej potvrdený stav.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
       setBusy(false);
     }
+  };
+
+  const acceptWorkOrder = async (workOrderId: string) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: acceptError } = await client.rpc("accept_work_order_assignment", {
+        p_work_order_id: workOrderId,
+      });
+      if (acceptError) throw acceptError;
+      await refreshWorkOrders();
+      setNotice("Zákazku ste prijali.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAttendanceShift = async (shift: AttendanceShift) => {
+    if (!client || !editingAttendanceShift || editingAttendanceShift.id !== shift.id) return;
+    const started = new Date(editingAttendanceShift.startedAt);
+    const ended = editingAttendanceShift.endedAt ? new Date(editingAttendanceShift.endedAt) : null;
+    if (Number.isNaN(started.getTime()) || (ended && (Number.isNaN(ended.getTime()) || ended <= started))) {
+      setError("Skontrolujte začiatok a koniec zmeny.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error: saveError } = await client.rpc("update_attendance_shift", {
+        p_shift_id: shift.id,
+        p_started_at: started.toISOString(),
+        p_ended_at: ended?.toISOString() ?? null,
+      });
+      if (saveError) throw saveError;
+      await refreshAttendance();
+      setEditingAttendanceShift(null);
+      setNotice("Dochádzkový záznam bol upravený.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client) return;
+    const fullName = profileFullName.trim();
+    if (fullName.length < 2 || fullName.length > 120) {
+      setError("Meno musí mať 2 až 120 znakov.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const { data, error: profileError } = await client.auth.updateUser({ data: { full_name: fullName } });
+    if (profileError) setError(profileError.message);
+    else {
+      if (data.user) setSession((current) => current ? { ...current, user: data.user } : current);
+      setNotice("Profil bol uložený.");
+    }
+    setBusy(false);
+  };
+
+  const saveCompanyPlanSelection = async () => {
+    if (!client || !activeCompanyId || !isManager || !profileSelectedPlan) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const { error: planError } = await client.rpc("select_company_plan", {
+      p_company_id: activeCompanyId,
+      p_plan: profileSelectedPlan,
+    });
+    if (planError) setError(planError.message);
+    else {
+      setMemberships((current) => current.map((membership) =>
+        membership.company_id === activeCompanyId
+          ? { ...membership, company: { ...membership.company, selected_plan: profileSelectedPlan } }
+          : membership,
+      ));
+      setNotice("Výber balíka bol uložený. Neaktivuje platené funkcie ani platbu.");
+    }
+    setBusy(false);
   };
 
   const updateWorkOrder = async (event: FormEvent<HTMLFormElement>, workOrderId: string) => {
@@ -1660,7 +1744,23 @@ export function App() {
                         {shift.source_work_entry_id
                           ? <span className="status-pill status-approved">Zo záznamu práce</span>
                           : !shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
+                        {!shift.source_work_entry_id && (isManager || shift.user_id === session?.user.id) && <button
+                          className="button button-outline button-small"
+                          onClick={() => {
+                            setEditingAttendanceShift({
+                              id: shift.id,
+                              startedAt: dateTimeLocal(shift.started_at),
+                              endedAt: shift.ended_at ? dateTimeLocal(shift.ended_at) : "",
+                            });
+                            setError("");
+                          }}
+                        ><Pencil size={13} /> Upraviť</button>}
                       </div>
+                      {editingAttendanceShift?.id === shift.id && <div className="attendance-edit-form">
+                        <label className="field"><span>Začiatok</span><input type="datetime-local" value={editingAttendanceShift.startedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, startedAt: event.target.value })} required /></label>
+                        <label className="field"><span>Koniec <small>prázdne = zmena stále prebieha</small></span><input type="datetime-local" value={editingAttendanceShift.endedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, endedAt: event.target.value })} /></label>
+                        <div className="form-actions"><button className="button button-quiet button-small" onClick={() => setEditingAttendanceShift(null)}>Zrušiť</button><button className="button button-primary button-small" disabled={busy} onClick={() => void saveAttendanceShift(shift)}>{busy ? "Ukladám…" : "Uložiť zmenu"}</button></div>
+                      </div>}
                       {shiftBreaks.map((pause) => <div className="attendance-break-line" key={pause.id}>
                         <Coffee size={13} /><span>Prestávka {timeLabel(pause.started_at)} – {pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}</span>
                       </div>)}
@@ -1676,19 +1776,29 @@ export function App() {
   const renderWorkOrders = () => {
     const employees = roster.filter((member) => member.active && member.role === "EMPLOYEE");
     const today = localDateKey(new Date().toISOString());
+    const calendarMonthStart = new Date(`${workOrderMonth}-01T12:00:00`);
+    const calendarOffset = (calendarMonthStart.getDay() + 6) % 7;
+    const calendarDayCount = new Date(calendarMonthStart.getFullYear(), calendarMonthStart.getMonth() + 1, 0).getDate();
+    const calendarCellCount = Math.ceil((calendarOffset + calendarDayCount) / 7) * 7;
+    const calendarCells = Array.from({ length: calendarCellCount }, (_, index) => {
+      const day = index - calendarOffset + 1;
+      return day > 0 && day <= calendarDayCount
+        ? `${workOrderMonth}-${String(day).padStart(2, "0")}`
+        : null;
+    });
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
           <div><span className="eyebrow">PRÁCA V TERÉNE</span><h1>Úlohy a zákazky</h1><p>Zadania, termíny a aktuálny stav práce na jednotlivých zákazkách.</p></div>
         </header>
-        {activeMembership?.role === "OWNER" && <section className="panel work-order-create-panel">
-          <div className="panel-heading"><div><h2><Plus size={17} /> Priradiť novú zákazku</h2><p>Zákazka sa zobrazí priradenému pracovníkovi.</p></div></div>
+        {isManager && <section className="panel work-order-create-panel">
+          <div className="panel-heading"><div><h2><Plus size={17} /> Priradiť novú zákazku</h2><p>Zákazka sa zobrazí každému vybranému pracovníkovi a čaká na jeho prijatie.</p></div></div>
           {employees.length === 0
             ? <p className="muted">Najskôr pridajte do tímu aktívneho zamestnanca.</p>
             : <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
               <div className="form-grid">
                 <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Elektroinštalácia rodinného domu" required /></label>
-                <label className="field"><span>Priradiť pracovníkovi</span><select name="assignee_id" defaultValue="" required><option value="" disabled>Vyberte zamestnanca</option>{employees.map((employee) => <option key={employee.user_id} value={employee.user_id}>{employee.full_name || employee.email}</option>)}</select></label>
+                <label className="field"><span>Priradiť zamestnancom <small>vyberte jedného alebo viacerých</small></span><select name="assignee_ids" multiple size={Math.min(Math.max(employees.length, 2), 6)} required>{employees.map((employee) => <option key={employee.user_id} value={employee.user_id}>{employee.full_name || employee.email}</option>)}</select></label>
                 <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
                 <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
               </div>
@@ -1698,17 +1808,55 @@ export function App() {
               <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Priraďujem…" : "Priradiť zákazku"}</button></div>
             </form>}
         </section>}
-        {activeMembership?.role !== "OWNER" && notice && <p className="invite-success" role="status">{notice}</p>}
-        {activeMembership?.role !== "OWNER" && error && <p className="form-error" role="alert">{error}</p>}
+        {!isManager && notice && <p className="invite-success" role="status">{notice}</p>}
+        {!isManager && error && <p className="form-error" role="alert">{error}</p>}
+        <section className="records-section">
+          <div className="section-title-row">
+            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Termíny všetkých zákaziek v mesiaci.</p></div>
+            <div className="attendance-month-switch">
+              <button className="employee-hours-toggle" aria-label="Predchádzajúci mesiac" onClick={() => {
+                const previous = new Date(`${workOrderMonth}-01T12:00:00`);
+                previous.setMonth(previous.getMonth() - 1);
+                setWorkOrderMonth(localDateKey(previous).slice(0, 7));
+              }}><ArrowLeft size={16} /></button>
+              <strong>{new Intl.DateTimeFormat("sk-SK", { month: "long", year: "numeric" }).format(calendarMonthStart)}</strong>
+              <button className="employee-hours-toggle" aria-label="Nasledujúci mesiac" onClick={() => {
+                const next = new Date(`${workOrderMonth}-01T12:00:00`);
+                next.setMonth(next.getMonth() + 1);
+                setWorkOrderMonth(localDateKey(next).slice(0, 7));
+              }}><ArrowRight size={16} /></button>
+            </div>
+          </div>
+          <div className="work-order-calendar" role="grid" aria-label="Kalendár zákaziek">
+            {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
+            {calendarCells.map((day, index) => {
+              const dayOrders = day ? workOrders.filter((order) => order.due_date === day) : [];
+              return <div className={`calendar-day ${day ? "" : "calendar-day-empty"}`} role="gridcell" key={`${day ?? "empty"}-${index}`}>
+                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayOrders.slice(0, 3).map((order) => <button
+                  className={`calendar-order calendar-order-${order.status.toLowerCase()}`}
+                  key={order.id}
+                  title={`${order.title} · ${workOrderStatusName(order.status)}`}
+                  onClick={() => document.getElementById(`work-order-${order.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                >{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}</>}
+              </div>;
+            })}
+          </div>
+        </section>
         <section className="records-section">
           <div className="section-title-row"><div><h2><ClipboardList size={17} /> Zoznam zákaziek</h2><p>{isManager ? "Zákazky celej firmy." : "Zákazky priradené vám."}</p></div><span className="count-pill">{workOrders.length} zákaziek</span></div>
           {workOrders.length === 0
             ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne zákazky</strong><p>{isManager ? "Priraďte prvú zákazku pracovníkovi." : "Keď vám vlastník priradí zákazku, zobrazí sa tu."}</p></div>
             : <div className="work-order-list">{workOrders.map((workOrder) => {
-              const assignee = roster.find((member) => member.user_id === workOrder.assignee_id);
-              const canUpdate = !isManager && workOrder.assignee_id === session?.user.id;
+              const assignments = workOrder.assignees ?? [];
+              const assigneeMembers = assignments.map((assignment) => ({
+                assignment,
+                member: roster.find((person) => person.user_id === assignment.user_id),
+              }));
+              const currentAssignment = assignments.find((assignment) => assignment.user_id === session?.user.id);
+              const canUpdate = !isManager && currentAssignment?.accepted_at !== null && currentAssignment !== undefined;
+              const needsAcceptance = !isManager && currentAssignment && !currentAssignment.accepted_at;
               const overdue = workOrder.status !== "DONE" && workOrder.due_date < today;
-              return <article className="panel work-order-card" key={workOrder.id}>
+              return <article className="panel work-order-card" id={`work-order-${workOrder.id}`} key={workOrder.id}>
                 <div className="work-order-heading">
                   <div><span className="eyebrow">ZÁKAZKA</span><h2>{workOrder.title}</h2></div>
                   <span className={`status-pill work-order-status work-order-${workOrder.status.toLowerCase()}`}>{workOrderStatusName(workOrder.status)}</span>
@@ -1716,9 +1864,15 @@ export function App() {
                 <div className="work-order-meta">
                   <span><MapPin size={14} />{workOrder.address}</span>
                   <span className={overdue ? "work-order-overdue" : ""}><Clock3 size={14} />Termín: {dateLabel(`${workOrder.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
-                  <span><Users size={14} />{assignee?.full_name || assignee?.email || "Bývalý zamestnanec"}</span>
+                  <span><Users size={14} />{assigneeMembers.length
+                    ? assigneeMembers.map(({ assignment, member }) => `${member?.full_name || member?.email || "Bývalý zamestnanec"} · ${assignment.accepted_at ? "prijatá" : "čaká na prijatie"}`).join(", ")
+                    : roster.find((member) => member.user_id === workOrder.assignee_id)?.full_name || roster.find((member) => member.user_id === workOrder.assignee_id)?.email || "Bývalý zamestnanec"}</span>
                 </div>
                 <p className="work-order-description">{workOrder.description}</p>
+                {needsAcceptance && <div className="work-order-accept-panel">
+                  <span>Zákazka čaká na vaše potvrdenie.</span>
+                  <button className="button button-primary button-small" disabled={busy} onClick={() => void acceptWorkOrder(workOrder.id)}>Prijať zákazku</button>
+                </div>}
                 {(workOrder.employee_materials || workOrder.work_report || workOrder.employee_note) && <div className="work-order-report">
                   <strong>Výkaz zákazky</strong>
                   {workOrder.report_submitted_at && <small>Odoslaný {dateLabel(workOrder.report_submitted_at)}</small>}
@@ -1927,6 +2081,40 @@ export function App() {
     );
   };
 
+  const renderProfile = () => (
+    <section className="content-page">
+      <header className="dashboard-title-row"><div><span className="eyebrow">OSOBNÉ NASTAVENIA</span><h1>Môj profil</h1><p>Upravte zobrazované meno a nastavenia účtu.</p></div></header>
+      <form className="panel form-panel form-stack profile-form" onSubmit={(event) => void saveProfile(event)}>
+        <label className="field"><span>Meno a priezvisko</span><input value={profileFullName} onChange={(event) => setProfileFullName(event.target.value)} minLength={2} maxLength={120} required /></label>
+        <label className="field"><span>Prihlasovací e-mail</span><input value={session?.user.email ?? ""} readOnly /></label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        {notice && <p className="invite-success" role="status">{notice}</p>}
+        <div className="form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : "Uložiť profil"}</button></div>
+      </form>
+      {isManager && <section className="pricing-proposal profile-plan-section">
+        <header className="pricing-proposal-heading"><div><span className="eyebrow">PREDPLATNÉ FIRMY</span><h2>Vyberte balík</h2></div><p>Výber sa uloží ako požadovaný balík. Platené funkcie sa nezapnú, kým nebude dokončená platba a aktivácia.</p></header>
+        <div className="pricing-proposal-grid">
+          {([
+            ["BASIC", "Basic", "19 €", "Zamestnanci, úlohy a základná evidencia."],
+            ["PRO", "Pro", "39 €", "Dochádzka, výkazy, exporty a reporty."],
+            ["TEAM", "Team", "69 €", "Viac tímov, zákazky, pokročilé reporty a oprávnenia."],
+          ] as const).map(([plan, name, amount, description]) => <button
+            type="button"
+            key={plan}
+            className={`panel pricing-proposal-card profile-plan-option ${profileSelectedPlan === plan ? "profile-plan-selected" : ""}`}
+            aria-pressed={profileSelectedPlan === plan}
+            onClick={() => setProfileSelectedPlan(plan)}
+          >
+            <span className="pricing-proposal-name">{name}</span><strong>{amount}<small> / mes.</small></strong><span>{description}</span>
+            {profileSelectedPlan === plan && <small className="profile-plan-current">Vybraný balík</small>}
+          </button>)}
+        </div>
+        <div className="form-actions"><button className="button button-primary" disabled={busy || !profileSelectedPlan || profileSelectedPlan === activeMembership?.company.selected_plan} onClick={() => void saveCompanyPlanSelection()}>{busy ? "Ukladám…" : "Uložiť výber balíka"}</button></div>
+        <p className="pricing-proposal-note">Platba kartou cez GoPay bude doplnená po aktivácii platobnej brány. Uložený výber nemení aktuálny technický plán.</p>
+      </section>}
+    </section>
+  );
+
   const renderTeam = () => (
     <section className="content-page">
       <header className="dashboard-title-row"><div><span className="eyebrow">FIREMNÝ PRIESTOR</span><h1>Tím</h1><p>Správa členov a ich prístupu k údajom firmy.</p></div></header>
@@ -2084,10 +2272,11 @@ export function App() {
           {isManager && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
           {isManager && <button className={`nav-link ${page === "history" ? "active" : ""}`} onClick={() => setPage("history")}><History size={18} /> História</button>}
+          <button className={`nav-link ${page === "profile" ? "active" : ""}`} onClick={() => setPage("profile")}><Pencil size={18} /> Môj profil</button>
           <button className="nav-link" onClick={() => { window.location.hash = "obchodne-podmienky"; }}><ShieldCheck size={18} /> Obchodné podmienky</button>
         </nav>
         <div className="sidebar-bottom">
-          <div className="profile-row"><span className="avatar">{initials(profileName)}</span><span className="profile-name"><strong>{profileName}</strong><small>{activeMembership ? roleName(activeMembership.role) : "Bez firmy"}</small></span></div>
+          <button className="profile-row profile-open-button" onClick={() => setPage("profile")}><span className="avatar">{initials(profileName)}</span><span className="profile-name"><strong>{profileName}</strong><small>{activeMembership ? roleName(activeMembership.role) : "Bez firmy"}</small></span><Pencil size={14} /></button>
           <button className="logout-button" aria-label="Odhlásiť sa" onClick={() => void signOut()}><LogOut size={17} /></button>
         </div>
       </aside>
@@ -2104,7 +2293,7 @@ export function App() {
                 <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
               </form>
             </section>
-          ) : page === "entry" ? renderEntryForm() : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : (
+          ) : page === "entry" ? renderEntryForm() : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
             <div className="content-page">
               <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}><Plus size={16} /> Nový záznam</button></header>
               <section className="stats-grid">
@@ -2112,6 +2301,20 @@ export function App() {
                 <div className="stat-card"><span className="stat-label">{isManager ? "Čaká na kontrolu" : "Moje záznamy na kontrolu"}</span><span className="stat-icon stat-amber"><ClipboardList size={17} /></span><strong>{visibleEntries.filter((entry) => entry.status === "PENDING").length}</strong><span className="stat-foot">{isManager ? "Nevybavené záznamy firmy" : "Vaše nevybavené záznamy"}</span></div>
                 <div className="stat-card"><span className="stat-label">{isManager ? "Členovia tímu" : "Moje záznamy tento mesiac"}</span><span className={`stat-icon ${isManager ? "stat-green" : "stat-purple"}`}>{isManager ? <Users size={17} /> : <ClipboardList size={17} />}</span><strong>{isManager ? roster.filter((member) => member.active).length : monthlyEntries.length}</strong><span className="stat-foot">{isManager ? "Aktívni členovia firmy" : "Zapísané pracovné dni"}</span></div>
               </section>
+              {isManager && (() => {
+                const waiting = workOrders.flatMap((order) => (order.assignees ?? [])
+                  .filter((assignment) => !assignment.accepted_at)
+                  .map((assignment) => ({
+                    order,
+                    employee: roster.find((member) => member.user_id === assignment.user_id),
+                  })));
+                return <section className="panel assignment-notice-panel">
+                  <div className="panel-heading"><div><h2><Users size={17} /> Potvrdenie priradených zákaziek</h2><p>Prehľad zamestnancov, ktorí ešte nepotvrdili pridelenú prácu.</p></div><span className="count-pill">{waiting.length} čaká</span></div>
+                  {waiting.length
+                    ? <ul>{waiting.map(({ order, employee }) => <li key={`${order.id}-${employee?.user_id ?? order.assignee_id}`}><strong>{order.title}</strong><span>{employee?.full_name || employee?.email || "Zamestnanec"} · termín {dateLabel(`${order.due_date}T12:00:00`)}</span><button className="button button-outline button-small" onClick={() => setPage("workOrders")}>Zobraziť</button></li>)}</ul>
+                    : <p className="assignment-notice-empty">Všetky priradenia sú potvrdené.</p>}
+                </section>;
+              })()}
               {isManager && <section className="employee-hours-section">
                 <div className="section-title-row"><div><h2><Clock3 size={17} /> Odpracované hodiny podľa zamestnanca</h2><p>Súčet záznamov za {reportMonth}.</p></div><div className="report-heading-actions"><span className="count-pill">{employeeMonthSummary.length} zamestnancov</span><button className="button button-outline button-small no-print" onClick={printMonthlyReport}><Printer size={15} /> Vytlačiť / uložiť PDF</button></div></div>
                 {employeeMonthSummary.length > 0
@@ -2202,6 +2405,9 @@ export function App() {
           {isManager && <button className={`mobile-nav-link ${page === "reports" ? "active" : ""}`} aria-current={page === "reports" ? "page" : undefined} onClick={() => setPage("reports")}>
             <Download size={19} /><span>Reporty</span>
           </button>}
+          <button className={`mobile-nav-link ${page === "profile" ? "active" : ""}`} aria-current={page === "profile" ? "page" : undefined} onClick={() => setPage("profile")}>
+            <Pencil size={19} /><span>Profil</span>
+          </button>
         </nav>}
       </div>
       {isManager && <section className="print-report">

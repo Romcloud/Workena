@@ -17,6 +17,7 @@ export type Company = {
   id: string;
   name: string;
   plan: "FREE" | "PRO";
+  selected_plan?: PaymentPlan | null;
 };
 
 export type PaymentPlan = "BASIC" | "PRO" | "TEAM";
@@ -88,6 +89,15 @@ export type WorkOrder = {
   report_submitted_at: string | null;
   created_at: string;
   updated_at: string;
+  assignees?: WorkOrderAssignment[];
+};
+
+export type WorkOrderAssignment = {
+  work_order_id: string;
+  company_id: string;
+  user_id: string;
+  accepted_at: string | null;
+  created_at: string;
 };
 
 export type WorkOrderPhoto = {
