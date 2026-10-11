@@ -12,3 +12,4 @@ yarn-debug.log*
 pnpm-debug.log*
 *.tsbuildinfo
 node_modules
+supabase/.temp/
