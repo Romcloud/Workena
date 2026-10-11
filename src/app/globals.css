@@ -151,6 +151,8 @@ button:disabled { opacity: .65; cursor: wait; }
 .nav-link:hover { color: #36453a; background: #f7f8f5; }
 .nav-link.active { color: #397554; background: #edf5ed; font-weight: 600; }
 .sidebar-bottom { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-top: auto; padding: 13px 2px 0; border-top: 1px solid #eef0ec; }
+.profile-open-button { min-width: 0; flex: 1; padding: 0; border: 0; text-align: left; background: transparent; }
+.profile-open-button > svg { flex: 0 0 auto; color: #8b9389; }
 .profile-row { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .profile-name { display: grid; min-width: 0; gap: 2px; }
 .profile-name strong { overflow: hidden; max-width: 135px; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -310,9 +312,34 @@ button:disabled { opacity: .65; cursor: wait; }
 .attendance-break-line { padding-top: 5px; color: #8a806a; }
 .attendance-shift-line .status-pill { padding: 3px 7px; font-size: 8px; }
 .attendance-history { min-width: 0; }
+.attendance-edit-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 11px; padding: 12px; border: 1px solid #e5ebe3; border-radius: 8px; background: #fafcf9; }
+.attendance-edit-form .form-actions { grid-column: 1 / -1; }
+.assignment-notice-panel { margin: 18px 0; padding: 17px 19px; }
+.assignment-notice-panel ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.assignment-notice-panel li { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.assignment-notice-panel li strong { flex: 1; }
+.assignment-notice-panel li span, .assignment-notice-empty { color: var(--muted); font-size: 11px; }
+.assignment-notice-empty { margin: 0; }
 .work-order-create-panel { padding: 19px; }
 .work-order-form { margin-top: 0; }
 .work-order-list { display: grid; gap: 12px; }
+.work-order-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.calendar-weekday { padding: 8px 10px; color: #7f887e; background: #f7f9f6; font-size: 10px; font-weight: 700; text-align: center; }
+.calendar-day { display: flex; min-height: 105px; flex-direction: column; gap: 4px; padding: 7px; border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
+.calendar-day:nth-child(7n) { border-right: 0; }
+.calendar-day-empty { background: #fafbf9; }
+.calendar-day-number { align-self: flex-end; color: #69736a; font-size: 10px; }
+.calendar-order { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #526454; background: #edf4eb; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-order-in_progress { color: #795f31; background: #faf1dc; }
+.calendar-order-done { color: #346c4c; background: #e5f2e6; }
+.calendar-day > small { color: var(--muted); font-size: 8px; }
+.work-order-accept-panel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid #dce9dc; border-radius: 8px; color: #526454; background: #f4f8f2; font-size: 11px; }
+.profile-form { max-width: 650px; }
+.profile-plan-section { margin-top: 22px; }
+.profile-plan-option { display: grid; justify-items: start; width: 100%; color: var(--ink); text-align: left; cursor: pointer; }
+.profile-plan-option > span:not(.pricing-proposal-name) { color: #737c72; font-size: 11px; }
+.profile-plan-selected { border-color: #75a584; box-shadow: 0 0 0 2px #75a5842b; }
+.profile-plan-current { color: var(--green-dark); font-weight: 700; }
 .work-order-card { display: grid; gap: 13px; padding: 19px; }
 .work-order-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .work-order-heading h2 { margin: 4px 0 0; font: 700 17px/1.35 var(--serif); }
