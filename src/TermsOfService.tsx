@@ -13,9 +13,6 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
         <h1>Obchodné podmienky</h1>
         <p>Verzia návrhu: 10. októbra 2026</p>
       </header>
-      <div className="terms-draft-notice" role="note">
-        Tento text je pracovný návrh, nie právne stanovisko ani záruka maximálnej ochrany. Pred zverejnením ho dajte skontrolovať slovenskému advokátovi, najmä pravidlá predplatného, spotrebiteľské práva, ochranu údajov a zodpovednosť.
-      </div>
       <article className="terms-content">
         <section>
           <h2>1. Prevádzkovateľ</h2>

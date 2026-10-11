@@ -92,7 +92,6 @@ button:disabled { opacity: .65; cursor: wait; }
 .back-link { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 0 8px; }
 .terms-header h1 { margin: 8px 0 4px; font: 700 clamp(30px, 5vw, 42px)/1.2 var(--serif); letter-spacing: -1.6px; }
 .terms-header p { margin: 0; color: var(--muted); font-size: 12px; }
-.terms-draft-notice { margin: 22px 0; padding: 14px 16px; border: 1px solid #ead9aa; border-radius: 9px; color: #695621; background: #fff9e9; font-size: 12px; line-height: 1.7; }
 .terms-content { display: grid; gap: 5px; }
 .terms-content section { padding: 18px 0; border-bottom: 1px solid var(--line); }
 .terms-content h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: -.2px; }
