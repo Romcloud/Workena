@@ -66,6 +66,22 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Požiadavku sa nepodarilo dokončiť. Skúste to znova.";
 }
 
+type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder";
+
+async function sendTransactionalEmail(
+  client: typeof supabase,
+  template: EmailTemplate,
+  to: string,
+  data: Record<string, string | number | undefined>,
+) {
+  if (!client || !to) return;
+  try {
+    await client.functions.invoke("send-email", { body: { template, to, data } });
+  } catch {
+    // Email delivery is best-effort and should never block the main action.
+  }
+}
+
 function initials(name: string) {
   return name.trim().slice(0, 1).toLocaleUpperCase("sk");
 }
@@ -441,6 +457,14 @@ export function App() {
     const request = data as PaymentRequest;
     setPaymentRequests((current) => [request, ...current.filter((item) => item.id !== request.id)]);
     setSelectedPaymentRequestId(request.id);
+    if (session?.user.email) {
+      void sendTransactionalEmail(client, "license_requested", session.user.email, {
+        companyName: activeMembership?.company.name ?? "",
+        planName: PAYMENT_PLAN_DETAILS[plan].name,
+        amount: PAYMENT_PLAN_DETAILS[plan].amount.toFixed(2).replace(".", ","),
+        variableSymbol: request.variable_symbol,
+      });
+    }
   };
 
   const refreshWorkOrders = useCallback(async () => {
@@ -745,6 +769,12 @@ export function App() {
           setMemberships(workspaces);
           setCompanyId(workspaces[workspaces.length - 1]?.company_id ?? "");
           setNotice("Firemný priestor je pripravený.");
+          if (session?.user.email) {
+            void sendTransactionalEmail(client, "company_welcome", session.user.email, {
+              companyName: String(form.get("name") ?? ""),
+              fullName: session.user.user_metadata?.full_name ?? "",
+            });
+          }
         }
       }
     }
@@ -1158,19 +1188,67 @@ export function App() {
     }
   };
 
-  const adminReviewPaymentRequest = async (requestId: string, approve: boolean) => {
+  const adminDeleteCompany = async (companyId: string, companyName: string) => {
     if (!client) return;
+    if (!window.confirm(`Naozaj natrvalo vymazať firmu „${companyName}“ a všetky jej dáta (zákazky, dochádzku, platby...)? Tento krok je nevratný.`)) return;
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminNotice("");
+    try {
+      const { error: deleteError } = await client.rpc("admin_delete_company", {
+        p_company_id: companyId,
+      });
+      if (deleteError) throw deleteError;
+      await refreshAdminCompanies();
+      setAdminNotice("Firma bola vymazaná.");
+    } catch (reason: unknown) {
+      setAdminError(errorText(reason));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const adminReviewPaymentRequest = async (company: AdminCompanyRow, approve: boolean) => {
+    if (!client || !company.pending_payment_id) return;
     setAdminBusy(true);
     setAdminError("");
     setAdminNotice("");
     try {
       const { error: reviewPaymentError } = await client.rpc("admin_review_payment_request", {
-        p_request_id: requestId,
+        p_request_id: company.pending_payment_id,
         p_approve: approve,
       });
       if (reviewPaymentError) throw reviewPaymentError;
       await refreshAdminCompanies();
       setAdminNotice(approve ? "Platba bola potvrdená a licencia pridelená." : "Platba bola zamietnutá.");
+      if (approve && company.owner_email && company.pending_payment_plan) {
+        void sendTransactionalEmail(client, "payment_confirmed", company.owner_email, {
+          companyName: company.name,
+          fullName: company.owner_name ?? "",
+          planName: PAYMENT_PLAN_DETAILS[company.pending_payment_plan].name,
+        });
+      }
+    } catch (reason: unknown) {
+      setAdminError(errorText(reason));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const adminSendPaymentReminder = async (company: AdminCompanyRow) => {
+    if (!client || !company.owner_email || !company.pending_payment_plan) return;
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminNotice("");
+    try {
+      await sendTransactionalEmail(client, "payment_reminder", company.owner_email, {
+        companyName: company.name,
+        fullName: company.owner_name ?? "",
+        planName: PAYMENT_PLAN_DETAILS[company.pending_payment_plan].name,
+        amount: Number(company.pending_payment_amount).toFixed(2).replace(".", ","),
+        variableSymbol: company.pending_payment_variable_symbol ?? "",
+      });
+      setAdminNotice("Upomienka bola odoslaná.");
     } catch (reason: unknown) {
       setAdminError(errorText(reason));
     } finally {
@@ -2438,8 +2516,9 @@ export function App() {
           {company.pending_payment_id && <div className="work-order-accept-panel">
             <span>Čaká platba {company.pending_payment_plan ? PAYMENT_PLAN_DETAILS[company.pending_payment_plan].name : ""} · {Number(company.pending_payment_amount).toFixed(2).replace(".", ",")} € · VS {company.pending_payment_variable_symbol}</span>
             <div className="attendance-clock-actions">
-              <button className="button button-primary button-small" disabled={adminBusy} onClick={() => void adminReviewPaymentRequest(company.pending_payment_id as string, true)}>Potvrdiť platbu</button>
-              <button className="button button-outline button-small" disabled={adminBusy} onClick={() => void adminReviewPaymentRequest(company.pending_payment_id as string, false)}>Zamietnuť</button>
+              <button className="button button-primary button-small" disabled={adminBusy} onClick={() => void adminReviewPaymentRequest(company, true)}>Potvrdiť platbu</button>
+              <button className="button button-outline button-small" disabled={adminBusy} onClick={() => void adminReviewPaymentRequest(company, false)}>Zamietnuť</button>
+              <button className="button button-outline button-small" disabled={adminBusy || !company.owner_email} onClick={() => void adminSendPaymentReminder(company)}>Poslať upomienku</button>
             </div>
           </div>}
           <div className="form-actions">
@@ -2449,6 +2528,7 @@ export function App() {
               <option value="PRO">Pro</option>
               <option value="TEAM">Team</option>
             </select></label>
+            <button className="button button-danger button-small" disabled={adminBusy} onClick={() => void adminDeleteCompany(company.company_id, company.name)}>Vymazať firmu</button>
           </div>
         </article>)}</div>}
     </section>
