@@ -13,11 +13,29 @@ export type Membership = {
   created_at: string;
 };
 
+export type CompanyPlan = "FREE" | "BASIC" | "PRO" | "TEAM";
+
 export type Company = {
   id: string;
   name: string;
-  plan: "FREE" | "PRO";
+  plan: CompanyPlan;
   selected_plan?: PaymentPlan | null;
+};
+
+export type AdminCompanyRow = {
+  company_id: string;
+  name: string;
+  created_at: string;
+  plan: CompanyPlan;
+  selected_plan: PaymentPlan | null;
+  owner_email: string | null;
+  owner_name: string | null;
+  member_count: number;
+  pending_payment_id: string | null;
+  pending_payment_plan: PaymentPlan | null;
+  pending_payment_amount: number | null;
+  pending_payment_variable_symbol: string | null;
+  pending_payment_created_at: string | null;
 };
 
 export type PaymentPlan = "BASIC" | "PRO" | "TEAM";

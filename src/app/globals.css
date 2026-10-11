@@ -354,6 +354,11 @@ button:disabled { opacity: .65; cursor: wait; }
 .work-order-assigned { color: #6d7281; background: #f0f1f5; }
 .work-order-in_progress { color: #947344; background: #fbf3e2; }
 .work-order-done { color: #397554; background: #eaf3e9; }
+.work-order-free { color: #6d7281; background: #f0f1f5; }
+.work-order-basic { color: #3a6ea5; background: #e9f1fb; }
+.work-order-pro { color: #397554; background: #eaf3e9; }
+.work-order-team { color: #8a4bab; background: #f4eafa; }
+.admin-plan-field { max-width: 220px; }
 .work-order-meta { display: flex; flex-wrap: wrap; gap: 8px 17px; color: #737c72; font-size: 10px; }
 .work-order-meta > span { display: flex; align-items: center; gap: 5px; }
 .work-order-overdue { color: #a3433a !important; }

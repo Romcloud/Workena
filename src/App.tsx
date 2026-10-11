@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  Building2,
   CalendarDays,
   Camera,
   CheckCircle2,
@@ -32,11 +33,11 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { AbsenceRequest, AbsenceStatus, AbsenceType, AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
+import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyPlan, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "profile" | "terms";
+type Page = "dashboard" | "entry" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "admin";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
@@ -50,6 +51,12 @@ const PAYMENT_PLAN_DETAILS: Record<PaymentPlan, { name: string; amount: number }
   BASIC: { name: "Basic", amount: 19 },
   PRO: { name: "Pro", amount: 39 },
   TEAM: { name: "Team", amount: 69 },
+};
+const COMPANY_PLAN_LABELS: Record<CompanyPlan, string> = {
+  FREE: "Free",
+  BASIC: "Basic",
+  PRO: "Pro",
+  TEAM: "Team",
 };
 
 type WorkOrderPhotoView = WorkOrderPhoto & { url: string };
@@ -207,6 +214,11 @@ export function App() {
   const [absenceType, setAbsenceType] = useState<AbsenceType>("VACATION");
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState<string | null>(null);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [adminCompanies, setAdminCompanies] = useState<AdminCompanyRow[]>([]);
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminNotice, setAdminNotice] = useState("");
   const [tripMonth, setTripMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
   const [tripOrigin, setTripOrigin] = useState("");
   const [tripDestination, setTripDestination] = useState("");
@@ -240,6 +252,7 @@ export function App() {
   const workOrderPhotosRequest = useRef(0);
   const vehicleTripsRequest = useRef(0);
   const absenceRequestsRequest = useRef(0);
+  const adminCompaniesRequest = useRef(0);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -287,6 +300,8 @@ export function App() {
       setWorkOrderPhotos([]);
       setPendingWorkOrderPhotos({});
       setVehicleTrips([]);
+      setIsPlatformAdmin(false);
+      setAdminCompanies([]);
       workOrdersCompany.current = "";
       workOrderRequest.current += 1;
       workOrderPhotosRequest.current += 1;
@@ -514,6 +529,18 @@ export function App() {
     setAbsenceRequests((data ?? []) as AbsenceRequest[]);
   }, [activeCompanyId, client]);
 
+  const refreshAdminCompanies = useCallback(async () => {
+    if (!client || !isPlatformAdmin) {
+      setAdminCompanies([]);
+      return;
+    }
+    const request = ++adminCompaniesRequest.current;
+    const { data, error: adminListError } = await client.rpc("admin_list_companies");
+    if (request !== adminCompaniesRequest.current) return;
+    if (adminListError) throw adminListError;
+    setAdminCompanies((data ?? []) as AdminCompanyRow[]);
+  }, [client, isPlatformAdmin]);
+
   const refreshAttendance = useCallback(async () => {
     if (!client || !activeCompanyId) return;
     const request = ++attendanceRequest.current;
@@ -604,6 +631,26 @@ export function App() {
   useEffect(() => {
     void refreshAbsenceRequests().catch((reason: unknown) => setError(errorText(reason)));
   }, [refreshAbsenceRequests]);
+
+  useEffect(() => {
+    if (!client || !session) {
+      setIsPlatformAdmin(false);
+      return;
+    }
+    let alive = true;
+    void client.rpc("is_platform_admin").then(({ data, error: adminCheckError }) => {
+      if (!alive) return;
+      if (adminCheckError) return;
+      setIsPlatformAdmin(Boolean(data));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [client, session]);
+
+  useEffect(() => {
+    void refreshAdminCompanies().catch((reason: unknown) => setAdminError(errorText(reason)));
+  }, [refreshAdminCompanies]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setAttendanceNow(Date.now()), 30_000);
@@ -1088,6 +1135,46 @@ export function App() {
       setError(errorText(reason));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const adminSetCompanyPlan = async (companyId: string, plan: CompanyPlan) => {
+    if (!client) return;
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminNotice("");
+    try {
+      const { error: setPlanError } = await client.rpc("admin_set_company_plan", {
+        p_company_id: companyId,
+        p_plan: plan,
+      });
+      if (setPlanError) throw setPlanError;
+      await refreshAdminCompanies();
+      setAdminNotice("Licencia bola upravená.");
+    } catch (reason: unknown) {
+      setAdminError(errorText(reason));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const adminReviewPaymentRequest = async (requestId: string, approve: boolean) => {
+    if (!client) return;
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminNotice("");
+    try {
+      const { error: reviewPaymentError } = await client.rpc("admin_review_payment_request", {
+        p_request_id: requestId,
+        p_approve: approve,
+      });
+      if (reviewPaymentError) throw reviewPaymentError;
+      await refreshAdminCompanies();
+      setAdminNotice(approve ? "Platba bola potvrdená a licencia pridelená." : "Platba bola zamietnutá.");
+    } catch (reason: unknown) {
+      setAdminError(errorText(reason));
+    } finally {
+      setAdminBusy(false);
     }
   };
 
@@ -2330,6 +2417,43 @@ export function App() {
     </section>
   );
 
+  const renderAdmin = () => (
+    <section className="content-page">
+      <header className="dashboard-title-row"><div><span className="eyebrow">SPRÁVA PLATFORMY</span><h1>Administrácia</h1><p>Prehľad všetkých zaevidovaných firiem a správa licencií.</p></div><span className="count-pill">{adminCompanies.length} firiem</span></header>
+      {adminNotice && <p className="invite-success" role="status">{adminNotice}</p>}
+      {adminError && <p className="form-error" role="alert">{adminError}</p>}
+      {adminCompanies.length === 0
+        ? <div className="panel empty-state"><span className="soft-icon"><Building2 size={19} /></span><strong>Zatiaľ tu nie sú žiadne firmy</strong><p>Keď si niekto založí firemný priestor, zobrazí sa tu.</p></div>
+        : <div className="work-order-list">{adminCompanies.map((company) => <article className="panel work-order-card" key={company.company_id}>
+          <div className="work-order-heading">
+            <div><span className="eyebrow">FIRMA</span><h2>{company.name}</h2></div>
+            <span className={`status-pill work-order-status work-order-${company.plan.toLowerCase()}`}>{COMPANY_PLAN_LABELS[company.plan]}</span>
+          </div>
+          <div className="work-order-meta">
+            <span><Users size={14} />{company.owner_name || company.owner_email || "Neznámy vlastník"}</span>
+            <span><ClipboardList size={14} />{company.member_count} aktívnych členov</span>
+            <span><CalendarDays size={14} />Založená {dateLabel(company.created_at)}</span>
+            {company.selected_plan && <span>Požadovaný balík: {PAYMENT_PLAN_DETAILS[company.selected_plan].name}</span>}
+          </div>
+          {company.pending_payment_id && <div className="work-order-accept-panel">
+            <span>Čaká platba {company.pending_payment_plan ? PAYMENT_PLAN_DETAILS[company.pending_payment_plan].name : ""} · {Number(company.pending_payment_amount).toFixed(2).replace(".", ",")} € · VS {company.pending_payment_variable_symbol}</span>
+            <div className="attendance-clock-actions">
+              <button className="button button-primary button-small" disabled={adminBusy} onClick={() => void adminReviewPaymentRequest(company.pending_payment_id as string, true)}>Potvrdiť platbu</button>
+              <button className="button button-outline button-small" disabled={adminBusy} onClick={() => void adminReviewPaymentRequest(company.pending_payment_id as string, false)}>Zamietnuť</button>
+            </div>
+          </div>}
+          <div className="form-actions">
+            <label className="field admin-plan-field"><span>Licencia</span><select value={company.plan} disabled={adminBusy} onChange={(event) => void adminSetCompanyPlan(company.company_id, event.target.value as CompanyPlan)}>
+              <option value="FREE">Free</option>
+              <option value="BASIC">Basic</option>
+              <option value="PRO">Pro</option>
+              <option value="TEAM">Team</option>
+            </select></label>
+          </div>
+        </article>)}</div>}
+    </section>
+  );
+
   const renderTeam = () => (
     <section className="content-page">
       <header className="dashboard-title-row"><div><span className="eyebrow">FIREMNÝ PRIESTOR</span><h1>Tím</h1><p>Správa členov a ich prístupu k údajom firmy.</p></div></header>
@@ -2352,10 +2476,10 @@ export function App() {
           </form>
         </section>}
       </div>
-      {activeMembership?.role === "OWNER" && <section className={`panel plan-card ${activeMembership.company.plan === "PRO" ? "plan-card-pro" : ""}`}>
-        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan === "PRO" ? "AKTÍVNY PLÁN" : "BEZPLATNÝ PLÁN"}</span><h2>{activeMembership.company.plan === "PRO" ? "Workena Pro" : "Workena Free"}</h2><p>{activeMembership.company.plan === "PRO" ? "Firemný priestor používa plán Pro." : `Používate ${roster.filter((member) => member.active && member.role === "EMPLOYEE").length} z 2 zamestnaneckých miest.`}</p></div>
-        <div className="plan-card-price"><strong>{activeMembership.company.plan === "PRO" ? "Pro" : "Free"}</strong><span>{activeMembership.company.plan === "PRO" ? "stav účtu" : "aktuálny účet"}</span></div>
-        <p className="plan-card-note">Toto je aktuálny technický stav účtu. Platené predplatné ani automatická aktivácia zatiaľ nie sú zapnuté.</p>
+      {activeMembership?.role === "OWNER" && <section className={`panel plan-card ${activeMembership.company.plan !== "FREE" ? "plan-card-pro" : ""}`}>
+        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span><h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2><p>{activeMembership.company.plan !== "FREE" ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.` : `Používate ${roster.filter((member) => member.active && member.role === "EMPLOYEE").length} z 2 zamestnaneckých miest.`}</p></div>
+        <div className="plan-card-price"><strong>{COMPANY_PLAN_LABELS[activeMembership.company.plan]}</strong><span>{activeMembership.company.plan !== "FREE" ? "stav účtu" : "aktuálny účet"}</span></div>
+        <p className="plan-card-note">Licenciu prideľuje správca Workena po potvrdení platby.</p>
       </section>}
       {activeMembership?.role === "OWNER" && <section className="pricing-proposal">
         <header className="pricing-proposal-heading">
@@ -2488,6 +2612,7 @@ export function App() {
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
           {isManager && <button className={`nav-link ${page === "history" ? "active" : ""}`} onClick={() => setPage("history")}><History size={18} /> História</button>}
           <button className={`nav-link ${page === "profile" ? "active" : ""}`} onClick={() => setPage("profile")}><Pencil size={18} /> Môj profil</button>
+          {isPlatformAdmin && <button className={`nav-link ${page === "admin" ? "active" : ""}`} onClick={() => { setPage("admin"); setAdminError(""); setAdminNotice(""); }}><Building2 size={18} /> Administrácia</button>}
           <button className="nav-link" onClick={() => { window.location.hash = "obchodne-podmienky"; }}><ShieldCheck size={18} /> Obchodné podmienky</button>
         </nav>
         <div className="sidebar-bottom">
@@ -2498,10 +2623,20 @@ export function App() {
       <div className="main-area">
         <header className="mobile-top"><Brand /><span className="mobile-company">{activeMembership?.company.name}</span><a className="mobile-terms" href="#obchodne-podmienky">Podmienky</a><button className="logout-button" aria-label="Odhlásiť sa" onClick={() => void signOut()}><LogOut size={17} /></button></header>
         <main className="page-content">
-          {!activeMembership ? (
+          {!activeMembership && !isPlatformAdmin ? (
             <section className="center-card company-create">
               <span className="eyebrow">VITAJTE VO WORKENE</span><h1>Založte firemný priestor</h1>
               <p className="muted">Váš účet zatiaľ nie je členom firmy. Založte firmu a stanete sa jej vlastníkom.</p>
+              <form className="form-stack" onSubmit={(event) => void createCompany(event)}>
+                <label className="field"><span>Názov firmy</span><input name="name" minLength={2} maxLength={120} placeholder="napr. Workena s.r.o." required /></label>
+                {error && <p className="form-error" role="alert">{error}</p>}
+                <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
+              </form>
+            </section>
+          ) : page === "admin" && isPlatformAdmin ? renderAdmin() : !activeMembership ? (
+            <section className="center-card company-create">
+              <span className="eyebrow">VITAJTE VO WORKENE</span><h1>Založte firemný priestor</h1>
+              <p className="muted">Váš účet zatiaľ nie je členom firmy. Založte firmu a stanete sa jej vlastníkom, alebo prejdite do Administrácie.</p>
               <form className="form-stack" onSubmit={(event) => void createCompany(event)}>
                 <label className="field"><span>Názov firmy</span><input name="name" minLength={2} maxLength={120} placeholder="napr. Workena s.r.o." required /></label>
                 {error && <p className="form-error" role="alert">{error}</p>}
