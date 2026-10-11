@@ -1,4 +1,4 @@
-export type Role = "OWNER" | "MANAGER" | "EMPLOYEE";
+export type Role = "OWNER" | "MANAGER" | "EMPLOYEE" | "ACCOUNTANT";
 export type EntryStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export type Membership = {

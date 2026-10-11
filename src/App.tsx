@@ -154,7 +154,7 @@ function attendanceDuration(
 }
 
 function roleName(role: Role) {
-  return role === "OWNER" ? "Vlastník" : role === "MANAGER" ? "Vedúci" : "Zamestnanec";
+  return role === "OWNER" ? "Vlastník" : role === "MANAGER" ? "Vedúci" : role === "ACCOUNTANT" ? "Účtovník" : "Zamestnanec";
 }
 
 function statusName(status: EntryStatus) {
@@ -285,7 +285,6 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
   const [profileFullName, setProfileFullName] = useState("");
-  const [profileSelectedPlan, setProfileSelectedPlan] = useState<PaymentPlan | "">("");
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
@@ -326,6 +325,7 @@ export function App() {
   const activeMembership = memberships.find((membership) => membership.company_id === companyId) ?? memberships[0];
   const activeCompanyId = activeMembership?.company_id ?? "";
   const isManager = activeMembership?.role === "OWNER" || activeMembership?.role === "MANAGER";
+  const canManageAttendance = isManager || activeMembership?.role === "ACCOUNTANT";
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? null;
   const selectedPaymentRequest = paymentRequests.find((request) => request.id === selectedPaymentRequestId) ?? null;
   const profileName =
@@ -337,7 +337,6 @@ export function App() {
 
   useEffect(() => {
     setProfileFullName(profileName);
-    setProfileSelectedPlan(activeMembership?.company.selected_plan ?? "");
     setBillingName(activeMembership?.company.billing_name ?? "");
     setBillingIco(activeMembership?.company.billing_ico ?? "");
     setBillingDic(activeMembership?.company.billing_dic ?? "");
@@ -1094,6 +1093,19 @@ export function App() {
     setBusy(false);
   };
 
+  const updateMemberRole = async (membership: Membership, role: Role) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    const { error: roleError } = await client.rpc("update_member_role", {
+      p_membership_id: membership.id,
+      p_new_role: role,
+    });
+    if (roleError) setError(roleError.message);
+    else setRoster((current) => current.map((member) => member.id === membership.id ? { ...member, role } : member));
+    setBusy(false);
+  };
+
   const createWorkOrder = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client || !activeCompanyId) return;
@@ -1471,27 +1483,6 @@ export function App() {
     setBusy(false);
   };
 
-  const saveCompanyPlanSelection = async () => {
-    if (!client || !activeCompanyId || !isManager || !profileSelectedPlan) return;
-    setBusy(true);
-    setError("");
-    setNotice("");
-    const { error: planError } = await client.rpc("select_company_plan", {
-      p_company_id: activeCompanyId,
-      p_plan: profileSelectedPlan,
-    });
-    if (planError) setError(planError.message);
-    else {
-      setMemberships((current) => current.map((membership) =>
-        membership.company_id === activeCompanyId
-          ? { ...membership, company: { ...membership.company, selected_plan: profileSelectedPlan } }
-          : membership,
-      ));
-      setNotice("Výber balíka bol uložený. Neaktivuje platené funkcie ani platbu.");
-    }
-    setBusy(false);
-  };
-
   const saveCompanyBillingDetails = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client || !activeCompanyId || !isManager) return;
@@ -1774,7 +1765,7 @@ export function App() {
     [attendanceMonth, attendanceShifts],
   );
   const attendanceSummary = useMemo(() => {
-    const members = isManager
+    const members = canManageAttendance
       ? roster.filter((member) => member.role === "EMPLOYEE" && (attendanceEmployeeFilter === "ALL" || member.user_id === attendanceEmployeeFilter))
       : roster.filter((member) => member.user_id === session?.user.id);
     const monthStartDate = new Date(`${attendanceMonth}-01T00:00:00`);
@@ -1798,7 +1789,7 @@ export function App() {
       })
       .filter(({ member, shifts }) => member.active || shifts.length > 0)
       .sort((a, b) => b.totalMilliseconds - a.totalMilliseconds);
-  }, [attendanceBreaks, attendanceEmployeeFilter, attendanceNow, isManager, monthAttendanceShifts, roster, session?.user.id]);
+  }, [attendanceBreaks, attendanceEmployeeFilter, attendanceNow, canManageAttendance, monthAttendanceShifts, roster, session?.user.id]);
   const monthVehicleTrips = useMemo(
     () => vehicleTrips.filter((trip) => trip.trip_date.slice(0, 7) === tripMonth),
     [tripMonth, vehicleTrips],
@@ -2212,7 +2203,7 @@ export function App() {
           <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => { setShowEntryForm(false); setEditingEntry(null); setPendingPhotos([]); }}>Zrušiť</button><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : editingEntry ? "Uložiť zmeny" : "Uložiť záznam"}</button></div>
         </form>
       </section>}
-      {isManager && <section className="panel">
+      {canManageAttendance && <section className="panel">
         <label className="field"><span>Zobraziť dochádzku zamestnanca</span>
           <select value={attendanceEmployeeFilter} onChange={(event) => setAttendanceEmployeeFilter(event.target.value)}>
             <option value="ALL">Všetci zamestnanci</option>
@@ -2283,6 +2274,8 @@ export function App() {
                   : [...shifts].sort((a, b) => b.started_at.localeCompare(a.started_at)).map((shift) => {
                     const shiftBreaks = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
                     const runningBreak = shiftBreaks.find((pause) => pause.ended_at === null);
+                    const sourceEntry = shift.source_work_entry_id ? entries.find((entry) => entry.id === shift.source_work_entry_id) : undefined;
+                    const canEditSourceEntry = !!sourceEntry && (canManageAttendance || (sourceEntry.user_id === session?.user.id && sourceEntry.status !== "APPROVED"));
                     return <section className="employee-day attendance-day" key={shift.id}>
                       <div className="employee-day-heading">
                         <strong>{dateLabel(shift.started_at)}</strong>
@@ -2293,7 +2286,7 @@ export function App() {
                         {shift.source_work_entry_id
                           ? <span className="status-pill status-approved">Zo záznamu práce</span>
                           : !shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
-                        {!shift.source_work_entry_id && (isManager || shift.user_id === session?.user.id) && <button
+                        {!shift.source_work_entry_id && (canManageAttendance || shift.user_id === session?.user.id) && <button
                           className="button button-outline button-small"
                           onClick={() => {
                             setEditingAttendanceShift({
@@ -2304,10 +2297,19 @@ export function App() {
                             setError("");
                           }}
                         ><Pencil size={13} /> Upraviť</button>}
-                        {!shift.source_work_entry_id && (isManager || shift.user_id === session?.user.id) && <button
+                        {!shift.source_work_entry_id && (canManageAttendance || shift.user_id === session?.user.id) && <button
                           className="button button-outline button-small"
                           disabled={busy}
                           onClick={() => void deleteAttendanceShift(shift.id)}
+                        ><Trash2 size={13} /> Vymazať</button>}
+                        {canEditSourceEntry && <button
+                          className="button button-outline button-small"
+                          onClick={() => { setEditingEntry(sourceEntry ?? null); setPendingPhotos([]); setShowEntryForm(true); setError(""); }}
+                        ><Pencil size={13} /> Upraviť</button>}
+                        {canEditSourceEntry && <button
+                          className="button button-outline button-small"
+                          disabled={busy}
+                          onClick={() => sourceEntry && void removeEntry(sourceEntry)}
                         ><Trash2 size={13} /> Vymazať</button>}
                       </div>
                       {editingAttendanceShift?.id === shift.id && <div className="attendance-edit-form">
@@ -2750,26 +2752,86 @@ export function App() {
         {notice && <p className="invite-success" role="status">{notice}</p>}
         <div className="form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : "Uložiť profil"}</button></div>
       </form>
-      {isManager && <section className="pricing-proposal profile-plan-section">
-        <header className="pricing-proposal-heading"><div><span className="eyebrow">PREDPLATNÉ FIRMY</span><h2>Vyberte balík</h2></div><p>Výber sa uloží ako požadovaný balík. Platené funkcie sa nezapnú, kým nebude dokončená platba a aktivácia.</p></header>
+      {isManager && activeMembership && <section className={`panel plan-card ${activeMembership.company.plan !== "FREE" ? "plan-card-pro" : ""}`}>
+        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span><h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2><p>{activeMembership.company.plan !== "FREE" ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.` : `Používate ${roster.filter((member) => member.active && member.role === "EMPLOYEE").length} z 2 zamestnaneckých miest.`}</p></div>
+        <div className="plan-card-price"><strong>{COMPANY_PLAN_LABELS[activeMembership.company.plan]}</strong><span>{activeMembership.company.plan !== "FREE" ? "stav účtu" : "aktuálny účet"}</span></div>
+        <p className="plan-card-note">Licenciu prideľuje správca Workena po potvrdení platby.</p>
+      </section>}
+      {isManager && <section className="pricing-proposal">
+        <header className="pricing-proposal-heading">
+          <div><span className="eyebrow">NA TESTOVANIE SO ZÁKAZNÍKMI</span><h2>Návrh balíkov a cien</h2></div>
+          <p>Navrhované ceny na overenie záujmu. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné.</p>
+        </header>
         <div className="pricing-proposal-grid">
-          {([
-            ["BASIC", "Basic", "19 €", "Zamestnanci, úlohy a základná evidencia."],
-            ["PRO", "Pro", "39 €", "Dochádzka, výkazy, exporty a reporty."],
-            ["TEAM", "Team", "69 €", "Viac tímov, zákazky, pokročilé reporty a oprávnenia."],
-          ] as const).map(([plan, name, amount, description]) => <button
-            type="button"
-            key={plan}
-            className={`panel pricing-proposal-card profile-plan-option ${profileSelectedPlan === plan ? "profile-plan-selected" : ""}`}
-            aria-pressed={profileSelectedPlan === plan}
-            onClick={() => setProfileSelectedPlan(plan)}
-          >
-            <span className="pricing-proposal-name">{name}</span><strong>{amount}<small> / mes.</small></strong><span>{description}</span>
-            {profileSelectedPlan === plan && <small className="profile-plan-current">Vybraný balík</small>}
-          </button>)}
+          <article className="panel pricing-proposal-card">
+            <div><span className="pricing-proposal-name">Basic</span><strong>19 €<small> / mes.</small></strong></div>
+            <p>Zamestnanci, úlohy a základná evidencia.</p>
+            <p className="muted"><small>{PLAN_FEATURE_NOTES.BASIC}</small></p>
+            <button className="button button-outline button-small" onClick={() => setPreviewPlan("BASIC")} disabled={busy}>Zobraziť platobné údaje</button>
+          </article>
+          <article className="panel pricing-proposal-card pricing-proposal-featured">
+            <div><span className="pricing-proposal-name">Pro</span><strong>39 €<small> / mes.</small></strong></div>
+            <p>Dochádzka, výkazy, exporty a reporty.</p>
+            <p className="muted"><small>{PLAN_FEATURE_NOTES.PRO}</small></p>
+            <button className="button button-outline button-small" onClick={() => setPreviewPlan("PRO")} disabled={busy}>Zobraziť platobné údaje</button>
+          </article>
+          <article className="panel pricing-proposal-card">
+            <div><span className="pricing-proposal-name">Team</span><strong>69 €<small> / mes.</small></strong></div>
+            <p>Viac tímov, zákazky, pokročilé reporty a oprávnenia.</p>
+            <p className="muted"><small>{PLAN_FEATURE_NOTES.TEAM}</small></p>
+            <button className="button button-outline button-small" onClick={() => setPreviewPlan("TEAM")} disabled={busy}>Zobraziť platobné údaje</button>
+          </article>
         </div>
-        <div className="form-actions"><button className="button button-primary" disabled={busy || !profileSelectedPlan || profileSelectedPlan === activeMembership?.company.selected_plan} onClick={() => void saveCompanyPlanSelection()}>{busy ? "Ukladám…" : "Uložiť výber balíka"}</button></div>
-        <p className="pricing-proposal-note">Platba kartou cez GoPay bude doplnená po aktivácii platobnej brány. Uložený výber nemení aktuálny technický plán.</p>
+        {previewPlan && <section className="panel payment-instructions">
+          <div className="payment-instructions-copy">
+            <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[previewPlan].name.toUpperCase()}</span>
+            <h3>Platobné údaje pre plán {PAYMENT_PLAN_DETAILS[previewPlan].name}</h3>
+            <p>Toto je iba náhľad platobných údajov. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
+            <dl>
+              <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
+              <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
+              <div><dt>Suma za 1 mesiac</dt><dd>{PAYMENT_PLAN_DETAILS[previewPlan].amount.toFixed(2).replace(".", ",")} €</dd></div>
+              <div><dt>Správa</dt><dd>Workena {PAYMENT_PLAN_DETAILS[previewPlan].name}</dd></div>
+            </dl>
+          </div>
+          <div className="form-actions">
+            <button className="button button-quiet" onClick={() => setPreviewPlan("")}>Zavrieť náhľad</button>
+            <button className="button button-primary" disabled={busy} onClick={() => void createPaymentRequest(previewPlan)}>Požiadať o licenciu</button>
+          </div>
+        </section>}
+        {selectedPaymentRequest && <section className="panel payment-instructions">
+          <div className="payment-instructions-copy">
+            <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name.toUpperCase()}</span>
+            <h3>Dokončite platbu prevodom</h3>
+            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii.</p>
+            <dl>
+              <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
+              <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
+              <div><dt>Suma za 1 mesiac</dt><dd>{Number(selectedPaymentRequest.amount_eur).toFixed(2).replace(".", ",")} €</dd></div>
+              <div><dt>Variabilný symbol</dt><dd>{selectedPaymentRequest.variable_symbol}</dd></div>
+              <div><dt>Správa</dt><dd>Workena {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name}</dd></div>
+            </dl>
+            <p className="payment-pending-note">Ide o jednorazový prevod za jeden mesiac, nie o opakované strhávanie. Stav: {selectedPaymentRequest.status === "PENDING" ? "Čaká na ručné potvrdenie správcom Workena." : selectedPaymentRequest.status === "CONFIRMED" ? "Platba bola potvrdená správcom Workena." : "Žiadosť bola zamietnutá."} Vytvorenie QR kódu ani odoslanie prevodu automaticky nemení váš plán.</p>
+          </div>
+          <div className="payment-qr">
+            <QRCodeSVG
+              value={`SPD*1.0*ACC:${PAYMENT_IBAN}*AM:${Number(selectedPaymentRequest.amount_eur).toFixed(2)}*CC:EUR*X-VS:${selectedPaymentRequest.variable_symbol}*MSG:Workena ${PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name}*RN:${PAYMENT_BENEFICIARY}`}
+              size={192}
+              level="M"
+              marginSize={4}
+              title="QR platba Workena"
+            />
+            <span>QR platba (SPAYD)</span>
+          </div>
+        </section>}
+        {paymentRequests.length > 0 && <div className="payment-request-list" aria-label="Žiadosti o platbu">
+          <strong>Žiadosti o platbu</strong>
+          {paymentRequests.map((request) => <button key={request.id} className={`payment-request-item ${request.id === selectedPaymentRequestId ? "active" : ""}`} onClick={() => setSelectedPaymentRequestId(request.id)}>
+            <span>{PAYMENT_PLAN_DETAILS[request.plan].name} · VS {request.variable_symbol}</span>
+            <span>{request.status === "PENDING" ? "Čaká na potvrdenie" : request.status === "CONFIRMED" ? "Potvrdená" : "Zamietnutá"}</span>
+          </button>)}
+        </div>}
+        <p className="pricing-proposal-note">Ceny sú naďalej návrhom na testovanie, nie aktívnou ponukou. Platbu overuje správca Workena ručne; automatická aktivácia predplatného nie je zapnutá.</p>
       </section>}
       {activeMembership?.role === "OWNER" && <section className="panel form-panel form-stack">
         <div className="panel-heading"><div><h2><Building2 size={17} /> Fakturačné údaje firmy</h2><p>Údaje sa použijú na vystavenie faktúry za licenciu.</p></div></div>
@@ -2871,91 +2933,21 @@ export function App() {
           <div className="panel-heading"><div><h2><Plus size={17} /> Pridať člena</h2><p>Člen musí mať aspoň raz vytvorený účet cez Google.</p></div></div>
           <form className="invite-form" onSubmit={(event) => void addMember(event)}>
             <label className="field"><span>E-mail Google účtu</span><input type="email" name="email" autoComplete="email" placeholder="meno@firma.sk" required /></label>
-            <label className="field"><span>Rola</span><select name="role" defaultValue="EMPLOYEE"><option value="EMPLOYEE">Zamestnanec</option>{activeMembership?.role === "OWNER" && <option value="MANAGER">Vedúci</option>}</select></label>
+            <label className="field"><span>Rola</span><select name="role" defaultValue="EMPLOYEE"><option value="EMPLOYEE">Zamestnanec</option><option value="ACCOUNTANT">Účtovník</option>{activeMembership?.role === "OWNER" && <option value="MANAGER">Vedúci</option>}</select></label>
             <button className="button button-primary" disabled={busy}>Pridať do tímu</button>
           </form>
         </section>}
       </div>
-      {activeMembership?.role === "OWNER" && <section className={`panel plan-card ${activeMembership.company.plan !== "FREE" ? "plan-card-pro" : ""}`}>
-        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span><h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2><p>{activeMembership.company.plan !== "FREE" ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.` : `Používate ${roster.filter((member) => member.active && member.role === "EMPLOYEE").length} z 2 zamestnaneckých miest.`}</p></div>
-        <div className="plan-card-price"><strong>{COMPANY_PLAN_LABELS[activeMembership.company.plan]}</strong><span>{activeMembership.company.plan !== "FREE" ? "stav účtu" : "aktuálny účet"}</span></div>
-        <p className="plan-card-note">Licenciu prideľuje správca Workena po potvrdení platby.</p>
-      </section>}
-      {activeMembership?.role === "OWNER" && <section className="pricing-proposal">
-        <header className="pricing-proposal-heading">
-          <div><span className="eyebrow">NA TESTOVANIE SO ZÁKAZNÍKMI</span><h2>Návrh balíkov a cien</h2></div>
-          <p>Navrhované ceny na overenie záujmu. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné.</p>
-        </header>
-        <div className="pricing-proposal-grid">
-          <article className="panel pricing-proposal-card">
-            <div><span className="pricing-proposal-name">Basic</span><strong>19 €<small> / mes.</small></strong></div>
-            <p>Zamestnanci, úlohy a základná evidencia.</p>
-            <p className="muted"><small>{PLAN_FEATURE_NOTES.BASIC}</small></p>
-            <button className="button button-outline button-small" onClick={() => setPreviewPlan("BASIC")} disabled={busy}>Zobraziť platobné údaje</button>
-          </article>
-          <article className="panel pricing-proposal-card pricing-proposal-featured">
-            <div><span className="pricing-proposal-name">Pro</span><strong>39 €<small> / mes.</small></strong></div>
-            <p>Dochádzka, výkazy, exporty a reporty.</p>
-            <p className="muted"><small>{PLAN_FEATURE_NOTES.PRO}</small></p>
-            <button className="button button-outline button-small" onClick={() => setPreviewPlan("PRO")} disabled={busy}>Zobraziť platobné údaje</button>
-          </article>
-          <article className="panel pricing-proposal-card">
-            <div><span className="pricing-proposal-name">Team</span><strong>69 €<small> / mes.</small></strong></div>
-            <p>Viac tímov, zákazky, pokročilé reporty a oprávnenia.</p>
-            <p className="muted"><small>{PLAN_FEATURE_NOTES.TEAM}</small></p>
-            <button className="button button-outline button-small" onClick={() => setPreviewPlan("TEAM")} disabled={busy}>Zobraziť platobné údaje</button>
-          </article>
-        </div>
-        {previewPlan && <section className="panel payment-instructions">
-          <div className="payment-instructions-copy">
-            <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[previewPlan].name.toUpperCase()}</span>
-            <h3>Platobné údaje pre plán {PAYMENT_PLAN_DETAILS[previewPlan].name}</h3>
-            <p>Toto je iba náhľad platobných údajov. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
-            <dl>
-              <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
-              <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
-              <div><dt>Suma za 1 mesiac</dt><dd>{PAYMENT_PLAN_DETAILS[previewPlan].amount.toFixed(2).replace(".", ",")} €</dd></div>
-              <div><dt>Správa</dt><dd>Workena {PAYMENT_PLAN_DETAILS[previewPlan].name}</dd></div>
-            </dl>
-          </div>
-          <div className="form-actions">
-            <button className="button button-quiet" onClick={() => setPreviewPlan("")}>Zavrieť náhľad</button>
-            <button className="button button-primary" disabled={busy} onClick={() => void createPaymentRequest(previewPlan)}>Požiadať o licenciu</button>
-          </div>
-        </section>}
-        {selectedPaymentRequest && <section className="panel payment-instructions">
-          <div className="payment-instructions-copy">
-            <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name.toUpperCase()}</span>
-            <h3>Dokončite platbu prevodom</h3>
-            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii.</p>
-            <dl>
-              <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
-              <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
-              <div><dt>Suma za 1 mesiac</dt><dd>{Number(selectedPaymentRequest.amount_eur).toFixed(2).replace(".", ",")} €</dd></div>
-              <div><dt>Variabilný symbol</dt><dd>{selectedPaymentRequest.variable_symbol}</dd></div>
-              <div><dt>Správa</dt><dd>Workena {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name}</dd></div>
-            </dl>
-            <p className="payment-pending-note">Ide o jednorazový prevod za jeden mesiac, nie o opakované strhávanie. Stav: {selectedPaymentRequest.status === "PENDING" ? "Čaká na ručné potvrdenie správcom Workena." : selectedPaymentRequest.status === "CONFIRMED" ? "Platba bola potvrdená správcom Workena." : "Žiadosť bola zamietnutá."} Vytvorenie QR kódu ani odoslanie prevodu automaticky nemení váš plán.</p>
-          </div>
-          <div className="payment-qr">
-            <QRCodeSVG
-              value={`SPD*1.0*ACC:${PAYMENT_IBAN}*AM:${Number(selectedPaymentRequest.amount_eur).toFixed(2)}*CC:EUR*X-VS:${selectedPaymentRequest.variable_symbol}*MSG:Workena ${PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name}*RN:${PAYMENT_BENEFICIARY}`}
-              size={192}
-              level="M"
-              marginSize={4}
-              title="QR platba Workena"
-            />
-            <span>QR platba (SPAYD)</span>
-          </div>
-        </section>}
-        {paymentRequests.length > 0 && <div className="payment-request-list" aria-label="Žiadosti o platbu">
-          <strong>Žiadosti o platbu</strong>
-          {paymentRequests.map((request) => <button key={request.id} className={`payment-request-item ${request.id === selectedPaymentRequestId ? "active" : ""}`} onClick={() => setSelectedPaymentRequestId(request.id)}>
-            <span>{PAYMENT_PLAN_DETAILS[request.plan].name} · VS {request.variable_symbol}</span>
-            <span>{request.status === "PENDING" ? "Čaká na potvrdenie" : request.status === "CONFIRMED" ? "Potvrdená" : "Zamietnutá"}</span>
-          </button>)}
-        </div>}
-        <p className="pricing-proposal-note">Ceny sú naďalej návrhom na testovanie, nie aktívnou ponukou. Platbu overuje správca Workena ručne; automatická aktivácia predplatného nie je zapnutá.</p>
+      {isManager && <section className="panel form-panel form-stack">
+        <div className="panel-heading"><div><h2><ShieldCheck size={17} /> Práva členov tímu</h2><p>Zamestnancovi môžete udeliť práva účtovníka — uvidí dochádzku celej firmy, bude ju môcť upravovať a bude mať prístup k exportom a reportom.</p></div></div>
+        <div className="member-list">{roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.role === "ACCOUNTANT")).map((member) => <div className="member-row" key={member.id}>
+          <span className="avatar">{initials(member.full_name || member.email)}</span>
+          <span className="member-name"><strong>{member.full_name || member.email}</strong><small>{member.email}</small></span>
+          <select value={member.role} disabled={busy} onChange={(event) => void updateMemberRole(member, event.target.value as Role)}>
+            <option value="EMPLOYEE">Zamestnanec</option>
+            <option value="ACCOUNTANT">Účtovník</option>
+          </select>
+        </div>)}</div>
       </section>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>
@@ -3027,7 +3019,7 @@ export function App() {
           <button className={`nav-link ${page === "attendance" ? "active" : ""}`} onClick={() => { setPage("attendance"); setError(""); }}><Clock3 size={18} /> Dochádzka</button>
           <button className={`nav-link ${page === "workOrders" ? "active" : ""}`} onClick={() => { setPage("workOrders"); setError(""); setNotice(""); }}><ClipboardList size={18} /> Zákazky</button>
           <button className={`nav-link ${page === "trips" ? "active" : ""}`} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}><MapPin size={18} /> Výkaz jázd</button>
-          {isManager && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
+          {canManageAttendance && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
           {isManager && <button className={`nav-link ${page === "history" ? "active" : ""}`} onClick={() => setPage("history")}><History size={18} /> História</button>}
           <button className={`nav-link ${page === "profile" ? "active" : ""}`} onClick={() => setPage("profile")}><Pencil size={18} /> Môj profil</button>
@@ -3062,7 +3054,7 @@ export function App() {
                 <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
               </form>
             </section>
-          ) : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
+          ) : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && canManageAttendance ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
             <div className="content-page">
               <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}><Plus size={16} /> Nový záznam</button></header>
               <section className={`panel attendance-clock attendance-clock-compact ${activeShift ? "attendance-clock-running" : ""}`}>
@@ -3216,7 +3208,7 @@ export function App() {
           {isManager && <button className={`mobile-nav-link ${page === "history" ? "active" : ""}`} aria-current={page === "history" ? "page" : undefined} onClick={() => setPage("history")}>
             <History size={19} /><span>História</span>
           </button>}
-          {isManager && <button className={`mobile-nav-link ${page === "reports" ? "active" : ""}`} aria-current={page === "reports" ? "page" : undefined} onClick={() => setPage("reports")}>
+          {canManageAttendance && <button className={`mobile-nav-link ${page === "reports" ? "active" : ""}`} aria-current={page === "reports" ? "page" : undefined} onClick={() => setPage("reports")}>
             <Download size={19} /><span>Reporty</span>
           </button>}
           <button className={`mobile-nav-link ${page === "profile" ? "active" : ""}`} aria-current={page === "profile" ? "page" : undefined} onClick={() => setPage("profile")}>
