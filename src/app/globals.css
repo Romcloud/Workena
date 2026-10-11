@@ -293,6 +293,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .history-month-field select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #e1e6e0; border-radius: 7px; color: #343a34; background: #fff; font-size: 12px; text-transform: capitalize; }
 .former-employee-badge { padding: 4px 8px; border-radius: 20px; color: #826c4b; background: #f6f0e6; font-size: 9px; white-space: nowrap; }
 .attendance-clock { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px; }
+.attendance-clock-compact { margin: 18px 0; }
 .attendance-clock-running { border-color: #d7e8d8; background: linear-gradient(115deg, #f1f7ef, #fff 72%); }
 .attendance-clock-copy h2 { margin: 5px 0 3px; font: 700 19px var(--serif); }
 .attendance-clock-copy p { margin: 3px 0 0; color: #778176; font-size: 11px; }

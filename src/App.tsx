@@ -2511,6 +2511,51 @@ export function App() {
           ) : page === "entry" ? renderEntryForm() : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && isManager ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
             <div className="content-page">
               <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setPage("entry"); }}><Plus size={16} /> Nový záznam</button></header>
+              <section className={`panel attendance-clock attendance-clock-compact ${activeShift ? "attendance-clock-running" : ""}`}>
+                <div className="attendance-clock-copy">
+                  <span className="eyebrow">PRACOVNÁ ZMENA</span>
+                  <h2>{!activeShift ? "Zatiaľ nemáte spustenú zmenu" : activeBreak ? "Práve máte prestávku" : "Pracovná zmena prebieha"}</h2>
+                  {activeShift && <p>Začiatok {timeLabel(activeShift.started_at)} · odpracované {durationLabel(attendanceDuration(
+                    activeShift,
+                    attendanceBreaks.filter((pause) => pause.shift_id === activeShift.id),
+                    attendanceNow,
+                  ))}</p>}
+                  {activeBreak && <p>Prestávka od {timeLabel(activeBreak.started_at)}</p>}
+                </div>
+                {!activeShift
+                  ? <button className="button button-primary" disabled={busy} onClick={() => void attendanceAction("start_attendance")}><Play size={16} /> Začať pracovať</button>
+                  : activeBreak
+                    ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
+                    : <div className="attendance-clock-actions">
+                      <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
+                      <button className="button button-danger" disabled={busy} onClick={() => void attendanceAction("end_attendance")}><Square size={15} /> Ukončiť prácu</button>
+                    </div>}
+              </section>
+              {!isManager && (() => {
+                const myOrders = workOrders.filter((order) =>
+                  (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id)
+                  || order.assignee_id === session?.user.id);
+                const activeOrders = myOrders
+                  .filter((order) => order.status !== "DONE")
+                  .sort((a, b) => a.due_date.localeCompare(b.due_date));
+                const todayKey = localDateKey(new Date().toISOString());
+                return <section className="panel assignment-notice-panel">
+                  <div className="panel-heading"><div><h2><ClipboardList size={17} /> Moje pridelené zákazky</h2><p>Zákazky priradené vám, ktoré ešte nie sú dokončené.</p></div><span className="count-pill">{activeOrders.length} aktívnych</span></div>
+                  {activeOrders.length
+                    ? <ul>{activeOrders.map((order) => {
+                      const assignment = (order.assignees ?? []).find((item) => item.user_id === session?.user.id);
+                      const overdue = order.status !== "DONE" && order.due_date < todayKey;
+                      return <li key={order.id}>
+                        <strong>{order.title}</strong>
+                        <span className={overdue ? "work-order-overdue" : ""}>{order.address} · termín {dateLabel(`${order.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
+                        <span className={`status-pill work-order-status work-order-${order.status.toLowerCase()}`}>{workOrderStatusName(order.status)}</span>
+                        {assignment && !assignment.accepted_at && <span className="status-pill status-pending">Čaká na potvrdenie</span>}
+                        <button className="button button-outline button-small" onClick={() => setPage("workOrders")}>Zobraziť</button>
+                      </li>;
+                    })}</ul>
+                    : <p className="assignment-notice-empty">Momentálne nemáte žiadne pridelené zákazky.</p>}
+                </section>;
+              })()}
               <section className="stats-grid">
                 <div className="stat-card"><span className="stat-label">Odpracované tento mesiac</span><span className="stat-icon stat-purple"><Clock3 size={17} /></span><strong>{hoursLabel(monthHours)} <small>hod.</small></strong><span className="stat-foot">{isManager ? "Všetci zamestnanci" : "Vaše odpracované hodiny"}</span></div>
                 <div className="stat-card"><span className="stat-label">{isManager ? "Čaká na kontrolu" : "Moje záznamy na kontrolu"}</span><span className="stat-icon stat-amber"><ClipboardList size={17} /></span><strong>{visibleEntries.filter((entry) => entry.status === "PENDING").length}</strong><span className="stat-foot">{isManager ? "Nevybavené záznamy firmy" : "Vaše nevybavené záznamy"}</span></div>
