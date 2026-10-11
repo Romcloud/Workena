@@ -4,6 +4,7 @@ import {
   CalendarDays,
   Camera,
   CheckCircle2,
+  CircleHelp,
   Clock3,
   ClipboardList,
   ChevronDown,
@@ -11,10 +12,13 @@ import {
   Coffee,
   Download,
   History,
+  Home,
   LayoutDashboard,
   LogOut,
   MapPin,
+  Palmtree,
   Pencil,
+  Plane,
   Play,
   Plus,
   Printer,
@@ -28,7 +32,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
+import type { AbsenceRequest, AbsenceStatus, AbsenceType, AttendanceBreak, AttendanceShift, Company, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
 
 type WorkspaceMembership = Membership & { company: Company };
@@ -118,6 +122,28 @@ function workOrderStatusName(status: WorkOrderStatus) {
   return status === "DONE" ? "Hotové" : status === "IN_PROGRESS" ? "Rozpracované" : "Priradené";
 }
 
+const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
+  VACATION: "Dovolenka",
+  HOME_OFFICE: "Home office",
+  OUT_OF_OFFICE: "Mimo práce",
+  OTHER: "Iné",
+};
+
+const ABSENCE_TYPE_ICONS: Record<AbsenceType, typeof Palmtree> = {
+  VACATION: Palmtree,
+  HOME_OFFICE: Home,
+  OUT_OF_OFFICE: Plane,
+  OTHER: CircleHelp,
+};
+
+function absenceStatusName(status: AbsenceStatus) {
+  return status === "APPROVED" ? "Schválené" : status === "REJECTED" ? "Zamietnuté" : status === "CANCELLED" ? "Zrušené" : "Čaká na schválenie";
+}
+
+function absenceDatesOverlapDay(request: AbsenceRequest, day: string) {
+  return request.start_date <= day && request.end_date >= day;
+}
+
 function csvCell(value: string | number | null | undefined) {
   let text = value === null || value === undefined ? "" : String(value);
   if (/^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
@@ -177,6 +203,8 @@ export function App() {
   const [workOrderPhotos, setWorkOrderPhotos] = useState<WorkOrderPhotoView[]>([]);
   const [pendingWorkOrderPhotos, setPendingWorkOrderPhotos] = useState<WorkOrderPhotoFiles>({});
   const [vehicleTrips, setVehicleTrips] = useState<VehicleTrip[]>([]);
+  const [absenceRequests, setAbsenceRequests] = useState<AbsenceRequest[]>([]);
+  const [absenceType, setAbsenceType] = useState<AbsenceType>("VACATION");
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState<string | null>(null);
   const [tripMonth, setTripMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
@@ -211,6 +239,7 @@ export function App() {
   const workOrdersCompany = useRef("");
   const workOrderPhotosRequest = useRef(0);
   const vehicleTripsRequest = useRef(0);
+  const absenceRequestsRequest = useRef(0);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -472,6 +501,19 @@ export function App() {
     setVehicleTrips((data ?? []) as VehicleTrip[]);
   }, [activeCompanyId, client]);
 
+  const refreshAbsenceRequests = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    const request = ++absenceRequestsRequest.current;
+    const { data, error: absenceError } = await client
+      .from("absence_requests")
+      .select("*")
+      .eq("company_id", activeCompanyId)
+      .order("start_date", { ascending: true });
+    if (request !== absenceRequestsRequest.current) return;
+    if (absenceError) throw absenceError;
+    setAbsenceRequests((data ?? []) as AbsenceRequest[]);
+  }, [activeCompanyId, client]);
+
   const refreshAttendance = useCallback(async () => {
     if (!client || !activeCompanyId) return;
     const request = ++attendanceRequest.current;
@@ -558,6 +600,10 @@ export function App() {
   useEffect(() => {
     void refreshVehicleTrips().catch((reason: unknown) => setError(errorText(reason)));
   }, [refreshVehicleTrips]);
+
+  useEffect(() => {
+    void refreshAbsenceRequests().catch((reason: unknown) => setError(errorText(reason)));
+  }, [refreshAbsenceRequests]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setAttendanceNow(Date.now()), 30_000);
@@ -927,7 +973,8 @@ export function App() {
     if (!client || !activeCompanyId) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const assigneeIds = form.getAll("assignee_ids").map(String).filter(Boolean);
+    const selectedAssigneeIds = form.getAll("assignee_ids").map(String).filter(Boolean);
+    const assigneeIds = isManager ? selectedAssigneeIds : session?.user.id ? [session.user.id] : [];
     setBusy(true);
     setError("");
     setNotice("");
@@ -946,7 +993,9 @@ export function App() {
       }
       await refreshWorkOrders();
       formElement.reset();
-      setNotice("Zákazka bola priradená vybraným zamestnancom. Po prijatí sa zobrazí jej potvrdený stav.");
+      setNotice(isManager
+        ? "Zákazka bola priradená vybraným zamestnancom. Po prijatí sa zobrazí jej potvrdený stav."
+        : "Zákazka bola pridaná do vášho kalendára.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -966,6 +1015,75 @@ export function App() {
       if (acceptError) throw acceptError;
       await refreshWorkOrders();
       setNotice("Zákazku ste prijali.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAbsenceRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !activeCompanyId) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: createError } = await client.rpc("create_absence_request", {
+        p_company_id: activeCompanyId,
+        p_type: String(form.get("type") ?? ""),
+        p_start_date: String(form.get("start_date") ?? ""),
+        p_end_date: String(form.get("end_date") ?? ""),
+        p_note: String(form.get("note") ?? ""),
+      });
+      if (createError) {
+        setError(createError.message);
+        return;
+      }
+      await refreshAbsenceRequests();
+      formElement.reset();
+      setAbsenceType("VACATION");
+      setNotice("Žiadosť o neprítomnosť bola odoslaná na schválenie.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelAbsenceRequest = async (absenceId: string) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: cancelError } = await client.rpc("cancel_absence_request", { p_absence_id: absenceId });
+      if (cancelError) throw cancelError;
+      await refreshAbsenceRequests();
+      setNotice("Žiadosť bola zrušená.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewAbsenceRequest = async (absenceId: string, status: "APPROVED" | "REJECTED") => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: reviewError } = await client.rpc("review_absence_request", {
+        p_absence_id: absenceId,
+        p_status: status,
+        p_review_note: null,
+      });
+      if (reviewError) throw reviewError;
+      await refreshAbsenceRequests();
+      setNotice(status === "APPROVED" ? "Neprítomnosť bola schválená." : "Neprítomnosť bola zamietnutá.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -1808,8 +1926,20 @@ export function App() {
               <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Priraďujem…" : "Priradiť zákazku"}</button></div>
             </form>}
         </section>}
-        {!isManager && notice && <p className="invite-success" role="status">{notice}</p>}
-        {!isManager && error && <p className="form-error" role="alert">{error}</p>}
+        {!isManager && <section className="panel work-order-create-panel">
+          <div className="panel-heading"><div><h2><Plus size={17} /> Pridať vlastnú zákazku do kalendára</h2><p>Zákazka sa rovno zobrazí ako vaša, bez čakania na potvrdenie.</p></div></div>
+          <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
+            <div className="form-grid">
+              <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Oprava kotla" required /></label>
+              <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
+              <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
+            </div>
+            <label className="field"><span>Opis práce</span><textarea name="description" rows={4} minLength={2} maxLength={4000} placeholder="Rozsah prác, dôležité pokyny a informácie…" required /></label>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            {notice && <p className="invite-success" role="status">{notice}</p>}
+            <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Pridávam…" : "Pridať zákazku"}</button></div>
+          </form>
+        </section>}
         <section className="records-section">
           <div className="section-title-row">
             <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Termíny všetkých zákaziek v mesiaci.</p></div>
@@ -1831,13 +1961,25 @@ export function App() {
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
               const dayOrders = day ? workOrders.filter((order) => order.due_date === day) : [];
+              const dayAbsences = day
+                ? absenceRequests.filter((request) => (request.status === "PENDING" || request.status === "APPROVED") && absenceDatesOverlapDay(request, day))
+                : [];
               return <div className={`calendar-day ${day ? "" : "calendar-day-empty"}`} role="gridcell" key={`${day ?? "empty"}-${index}`}>
                 {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayOrders.slice(0, 3).map((order) => <button
                   className={`calendar-order calendar-order-${order.status.toLowerCase()}`}
                   key={order.id}
                   title={`${order.title} · ${workOrderStatusName(order.status)}`}
                   onClick={() => document.getElementById(`work-order-${order.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                >{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}</>}
+                >{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}
+                {dayAbsences.slice(0, 2).map((request) => {
+                  const member = roster.find((person) => person.user_id === request.user_id);
+                  return <button
+                    className={`calendar-absence calendar-absence-${request.type.toLowerCase()} ${request.status === "PENDING" ? "calendar-absence-pending" : ""}`}
+                    key={request.id}
+                    title={`${ABSENCE_TYPE_LABELS[request.type]} · ${member?.full_name || member?.email || "Zamestnanec"} · ${absenceStatusName(request.status)}`}
+                    onClick={() => document.getElementById(`absence-${request.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                  >{ABSENCE_TYPE_LABELS[request.type]}{request.status === "PENDING" ? " (čaká)" : ""}</button>;
+                })}{dayAbsences.length > 2 && <small>+{dayAbsences.length - 2} neprítomnosti</small>}</>}
               </div>;
             })}
           </div>
@@ -1920,6 +2062,56 @@ export function App() {
                 </form>}
               </article>;
             })}</div>}
+        </section>
+        <section className="panel work-order-create-panel">
+          <div className="panel-heading"><div><h2><Palmtree size={17} /> Nahlásiť neprítomnosť</h2><p>Dovolenka, home office alebo iná neprítomnosť čaká na schválenie vedením.</p></div></div>
+          <form className="form-stack work-order-form" onSubmit={(event) => void createAbsenceRequest(event)}>
+            <div className="form-grid">
+              <label className="field"><span>Typ neprítomnosti</span><select name="type" value={absenceType} onChange={(event) => setAbsenceType(event.target.value as AbsenceType)} required>
+                {(Object.keys(ABSENCE_TYPE_LABELS) as AbsenceType[]).map((type) => <option key={type} value={type}>{ABSENCE_TYPE_LABELS[type]}</option>)}
+              </select></label>
+              <label className="field"><span>Od</span><input type="date" name="start_date" required /></label>
+              <label className="field"><span>Do</span><input type="date" name="end_date" required /></label>
+            </div>
+            <label className="field"><span>Poznámka {absenceType === "OTHER" ? <small>povinné pri type „Iné“</small> : <small>voliteľné</small>}</span><textarea name="note" rows={2} maxLength={1000} placeholder="Doplňujúca informácia…" required={absenceType === "OTHER"} /></label>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            {notice && <p className="invite-success" role="status">{notice}</p>}
+            <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Odosielam…" : "Odoslať žiadosť"}</button></div>
+          </form>
+        </section>
+        <section className="records-section">
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Neprítomnosti</h2><p>{isManager ? "Žiadosti celého tímu." : "Vaše žiadosti o neprítomnosť."}</p></div><span className="count-pill">{(isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id)).length} žiadostí</span></div>
+          {(() => {
+            const visibleAbsences = (isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id))
+              .slice()
+              .sort((a, b) => (a.status === "PENDING") === (b.status === "PENDING") ? b.start_date.localeCompare(a.start_date) : a.status === "PENDING" ? -1 : 1);
+            if (visibleAbsences.length === 0) {
+              return <div className="panel empty-state"><span className="soft-icon"><Palmtree size={19} /></span><strong>Zatiaľ žiadne žiadosti o neprítomnosť</strong><p>{isManager ? "Keď niekto nahlási neprítomnosť, zobrazí sa tu." : "Nahláste dovolenku, home office alebo inú neprítomnosť vyššie."}</p></div>;
+            }
+            return <div className="work-order-list">{visibleAbsences.map((request) => {
+              const member = roster.find((person) => person.user_id === request.user_id);
+              const AbsenceIcon = ABSENCE_TYPE_ICONS[request.type];
+              return <article className="panel work-order-card" id={`absence-${request.id}`} key={request.id}>
+                <div className="work-order-heading">
+                  <div><span className="eyebrow">NEPRÍTOMNOSŤ</span><h2><AbsenceIcon size={16} /> {ABSENCE_TYPE_LABELS[request.type]}</h2></div>
+                  <span className={`status-pill status-${request.status.toLowerCase()}`}>{absenceStatusName(request.status)}</span>
+                </div>
+                <div className="work-order-meta">
+                  {isManager && <span><Users size={14} />{member?.full_name || member?.email || "Bývalý zamestnanec"}</span>}
+                  <span><Clock3 size={14} />{dateLabel(`${request.start_date}T12:00:00`)} – {dateLabel(`${request.end_date}T12:00:00`)}</span>
+                </div>
+                {request.note && <p className="work-order-description">{request.note}</p>}
+                {request.review_note && <p className="work-order-description"><b>Poznámka vedenia:</b> {request.review_note}</p>}
+                {isManager && request.status === "PENDING" && <div className="absence-actions">
+                  <button className="button button-primary button-small" disabled={busy} onClick={() => void reviewAbsenceRequest(request.id, "APPROVED")}>Schváliť</button>
+                  <button className="button button-outline button-small" disabled={busy} onClick={() => void reviewAbsenceRequest(request.id, "REJECTED")}>Zamietnuť</button>
+                </div>}
+                {!isManager && request.status === "PENDING" && <div className="absence-actions">
+                  <button className="button button-outline button-small" disabled={busy} onClick={() => void cancelAbsenceRequest(request.id)}>Zrušiť žiadosť</button>
+                </div>}
+              </article>;
+            })}</div>;
+          })()}
         </section>
       </section>
     );

@@ -111,6 +111,25 @@ export type WorkOrderPhoto = {
   created_at: string;
 };
 
+export type AbsenceType = "VACATION" | "HOME_OFFICE" | "OUT_OF_OFFICE" | "OTHER";
+export type AbsenceStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+export type AbsenceRequest = {
+  id: string;
+  company_id: string;
+  user_id: string;
+  type: AbsenceType;
+  start_date: string;
+  end_date: string;
+  note: string | null;
+  status: AbsenceStatus;
+  review_note: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type VehicleTrip = {
   id: string;
   company_id: string;

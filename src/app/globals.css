@@ -229,6 +229,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .status-pending { color: #947344; background: #fbf3e2; }
 .status-approved { color: #47825d; background: #eaf4e9; }
 .status-rejected { color: #a14940; background: #f9ece9; }
+.status-cancelled { color: #6d7281; background: #f0f1f5; }
 .record-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; color: #8c938a; font-size: 10px; }
 .record-meta span { display: inline-flex; align-items: center; gap: 4px; }
 .record-person { color: #66736a; }
@@ -333,7 +334,13 @@ button:disabled { opacity: .65; cursor: wait; }
 .calendar-order-in_progress { color: #795f31; background: #faf1dc; }
 .calendar-order-done { color: #346c4c; background: #e5f2e6; }
 .calendar-day > small { color: var(--muted); font-size: 8px; }
+.calendar-absence { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #4a5c8a; background: #e9edf9; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-absence-home_office { color: #6a4f91; background: #efe8f6; }
+.calendar-absence-out_of_office { color: #7a5a2b; background: #f7ead9; }
+.calendar-absence-other { color: #5a5f66; background: #eceef0; }
+.calendar-absence-pending { opacity: 0.75; border: 1px dashed currentColor; background: transparent; }
 .work-order-accept-panel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid #dce9dc; border-radius: 8px; color: #526454; background: #f4f8f2; font-size: 11px; }
+.absence-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .profile-form { max-width: 650px; }
 .profile-plan-section { margin-top: 22px; }
 .profile-plan-option { display: grid; justify-items: start; width: 100%; color: var(--ink); text-align: left; cursor: pointer; }
