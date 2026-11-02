@@ -40,9 +40,10 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
 import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyJoinRequest, CompanyPlan, CompanySearchResult, Customer, CustomerStatus, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
+import { PrivacyPolicy } from "./PrivacyPolicy";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "attendance" | "workOrders" | "customers" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "admin";
+type Page = "dashboard" | "attendance" | "workOrders" | "customers" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "privacy" | "admin";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
@@ -296,8 +297,9 @@ export function App() {
   const [attendanceNow, setAttendanceNow] = useState(Date.now());
   const [page, setPage] = useState<Page>(() => {
     if (window.location.hash === "#obchodne-podmienky") return "terms";
+    if (window.location.hash === "#ochrana-osobnych-udajov") return "privacy";
     const savedPage = window.localStorage.getItem("workena-page");
-    const pages: Page[] = ["dashboard", "attendance", "workOrders", "customers", "trips", "reports", "team", "history", "profile", "terms", "admin"];
+    const pages: Page[] = ["dashboard", "attendance", "workOrders", "customers", "trips", "reports", "team", "history", "profile", "terms", "privacy", "admin"];
     return pages.includes(savedPage as Page) ? savedPage as Page : "dashboard";
   });
   const [customerSearch, setCustomerSearch] = useState("");
@@ -366,7 +368,8 @@ export function App() {
   useEffect(() => {
     const handleHashChange = () => {
       if (window.location.hash === "#obchodne-podmienky") setPage("terms");
-      else setPage((current) => current === "terms" ? "dashboard" : current);
+      else if (window.location.hash === "#ochrana-osobnych-udajov") setPage("privacy");
+      else setPage((current) => current === "terms" || current === "privacy" ? "dashboard" : current);
     };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
@@ -2659,6 +2662,13 @@ export function App() {
     }} />;
   }
 
+  if (page === "privacy") {
+    return <PrivacyPolicy onBack={() => {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      setPage("dashboard");
+    }} />;
+  }
+
   if (!client) {
     return (
       <main className="center-page">
@@ -2681,6 +2691,7 @@ export function App() {
       <main className="landing">
         <nav className="landing-nav">
           <Brand />
+          <div className="landing-nav-links"><a href="#ponuka">Služba a ceny</a><a href="#kontakt">Kontakt</a></div>
           <button className="button button-outline" onClick={() => void signIn()} disabled={busy}>Prihlásiť sa</button>
         </nav>
         <section className="hero">
@@ -2710,7 +2721,71 @@ export function App() {
           <div><span className="benefit-icon"><ShieldCheck size={19} /></span><strong>Firemné súkromie</strong><p>Každá firma má svoje oddelené a chránené údaje.</p></div>
           <div><span className="benefit-icon"><CheckCircle2 size={19} /></span><strong>Jasný prehľad</strong><p>Vedúci nájde potrebné záznamy podľa ľudí aj práce.</p></div>
         </section>
-        <footer className="landing-footer">© {new Date().getFullYear()} Workena <span>Navrhnutá pre skutočnú prácu.</span><a href="#obchodne-podmienky">Obchodné podmienky</a></footer>
+        <section className="landing-offer" id="ponuka">
+          <header className="pricing-proposal-heading">
+            <div><span className="eyebrow">SLUŽBA A CENY</span><h2>Workena — evidencia práce online</h2></div>
+            <p>Webová aplikácia na evidenciu pracovného času, dochádzky, zákaziek, jázd a súvisiacich tímových údajov. Digitálna služba sa používa cez webové rozhranie.</p>
+          </header>
+          <div className="sales-pricing-grid">
+            <article className="panel pricing-proposal-card">
+              <div><span className="pricing-proposal-name">Free</span><strong>0,00 €<small> / mesiac</small></strong></div>
+              <p>Bezplatné používanie Workeny na základnú evidenciu práce.</p>
+              <p className="muted"><small>Maximálne 2 zamestnanci; bez priraďovania zákaziek.</small></p>
+              <small className="price-tax-note">Cena bez poplatku.</small>
+            </article>
+            <article className="panel pricing-proposal-card">
+              <div><span className="pricing-proposal-name">Basic</span><strong>19,00 €<small> / mesiac</small></strong></div>
+              <p>Zamestnanci, úlohy a základná evidencia.</p>
+              <p className="muted"><small>Maximálne 10 zamestnancov.</small></p>
+              <small className="price-tax-note">Návrhová cena; DPH treba potvrdiť.</small>
+            </article>
+            <article className="panel pricing-proposal-card">
+              <div><span className="pricing-proposal-name">Pro</span><strong>39,00 €<small> / mesiac</small></strong></div>
+              <p>Dochádzka, výkazy, exporty, reporty a priraďovanie zákaziek.</p>
+              <p className="muted"><small>Maximálne 30 zamestnancov.</small></p>
+              <small className="price-tax-note">Návrhová cena; DPH treba potvrdiť.</small>
+            </article>
+            <article className="panel pricing-proposal-card">
+              <div><span className="pricing-proposal-name">Team</span><strong>69,00 €<small> / mesiac</small></strong></div>
+              <p>Viac tímov, zákazky, pokročilé reporty a oprávnenia.</p>
+              <p className="muted"><small>Neobmedzený počet zamestnancov.</small></p>
+              <small className="price-tax-note">Návrhová cena; DPH treba potvrdiť.</small>
+            </article>
+          </div>
+          <p className="sales-price-disclaimer">Platené sumy Basic, Pro a Team sú iba návrhové ceny a momentálne nie sú záväznou ponukou na objednanie. Uvedená sadzba DPH na kontrolu je 23 %; pri návrhových cenách nie je potvrdené, či sumy DPH zahŕňajú alebo sú bez DPH. Pred spustením predaja treba daňový status potvrdiť. Platba cez GoPay nie je v aplikácii aktuálne zapojená.</p>
+        </section>
+        <section className="landing-contact" id="kontakt">
+          <div>
+            <span className="eyebrow">KONTAKT A PREVÁDZKOVATEĽ</span>
+            <h2>ROVOLT</h2>
+            <p>Roman Chlebovec — obchodné označenie ROVOLT</p>
+          </div>
+          <address>
+            <span>IČO: 57875189 · DIČ: 1121595376</span>
+            <span>IČ DPH: [DOPLNIŤ CELÉ IČ DPH]</span>
+            <span>MPČĽ 3053/11, 058 01 Poprad, Slovensko</span>
+            <a href="mailto:info@rovolt.sk">info@rovolt.sk</a>
+            <a href="tel:+421904826557">0904 826 557</a>
+          </address>
+        </section>
+        <section className="landing-payments">
+          <strong>Platba a grafické podklady GoPay</strong>
+          <p>Aplikácia aktuálne zobrazuje údaje k bankovému prevodu pri žiadosti o licenciu. Platba kartou cez GoPay zatiaľ nie je zapojená; nasledujúce grafické podklady preto neznamenajú, že tieto spôsoby platby sú aktívne.</p>
+          <div className="payment-brand-assets" aria-label="Grafické podklady GoPay a platobných značiek">
+            <img className="payment-brand-gopay" src="/bannerr3D/gopay-banner-colorfull.svg" alt="GoPay" />
+            <img src="/bannerr3D/mastercard.png" alt="Mastercard" />
+            <img className="payment-brand-secure" src="/bannerr3D/mastercard-securecode.png" alt="Mastercard SecureCode" />
+          </div>
+          <p className="payment-brand-source-links">Pôvodné vektorové podklady: <a href="/bannerr3D/visa-full-colour-rgb.eps" download>Visa</a>, <a href="/bannerr3D/visa_electron_2015.eps" download>Visa Electron</a>, <a href="/bannerr3D/verified_by_visa-full-colour.eps" download>Verified by Visa</a> a <a href="/bannerr3D/me_accpt_match_eps.eps" download>ďalší podklad Mastercard</a>.</p>
+        </section>
+        <footer className="landing-footer">
+          <span>© {new Date().getFullYear()} Workena · Navrhnutá pre skutočnú prácu.</span>
+          <nav aria-label="Právne a kontaktné informácie">
+            <a href="#kontakt">Kontakt</a>
+            <a href="#obchodne-podmienky">Obchodné podmienky</a>
+            <a href="#ochrana-osobnych-udajov">Ochrana osobných údajov</a>
+          </nav>
+        </footer>
       </main>
     );
   }
@@ -3017,7 +3092,8 @@ export function App() {
                       </select>
                       {selectedAssigneeIds.length > 1 && <button type="button" className="button button-outline button-small" aria-label="Odobrať zamestnanca" onClick={() => setSelectedAssigneeIds((current) => current.filter((_, row) => row !== index))}><X size={14} /></button>}
                     </div>)}
-                    {selectedAssigneeIds.length < employees.length && <button type="button" className="button button-outline button-small" onClick={() => setSelectedAssigneeIds((current) => [...current, ""])}><Plus size={14} /> Ďalší zamestnanec</button>}
+                    <button type="button" className="button button-outline button-small" onClick={() => setSelectedAssigneeIds((current) => current.length < employees.length ? [...current, ""] : current)} disabled={selectedAssigneeIds.length >= employees.length}><Plus size={14} /> Ďalší zamestnanec</button>
+                    {selectedAssigneeIds.length >= employees.length && <small className="muted">Všetci dostupní zamestnanci sú pridaní.</small>}
                   </div>
                 </div>
                 <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
@@ -3489,7 +3565,7 @@ export function App() {
       {isManager && <section className="pricing-proposal">
         <header className="pricing-proposal-heading">
           <div><span className="eyebrow">NA TESTOVANIE SO ZÁKAZNÍKMI</span><h2>Návrh balíkov a cien</h2></div>
-          <p>Navrhované ceny na overenie záujmu. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné.</p>
+          <p>Navrhované ceny na overenie záujmu. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné. Sadzba DPH na kontrolu: 23 %; nie je potvrdené, či sumy DPH zahŕňajú alebo sú bez DPH.</p>
         </header>
         <div className="pricing-proposal-grid">
           <article className="panel pricing-proposal-card">
@@ -3515,7 +3591,7 @@ export function App() {
           <div className="payment-instructions-copy">
             <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[previewPlan].name.toUpperCase()}</span>
             <h3>Platobné údaje pre plán {PAYMENT_PLAN_DETAILS[previewPlan].name}</h3>
-            <p>Toto je iba náhľad platobných údajov. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
+            <p>Toto je iba náhľad platobných údajov k návrhovej cene, nie záväzná objednávka. DPH je na kontrolu pri sadzbe 23 %; nie je potvrdené, či zobrazená suma DPH zahŕňa alebo je bez DPH. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
             <dl>
               <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
               <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
@@ -3532,7 +3608,7 @@ export function App() {
           <div className="payment-instructions-copy">
             <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name.toUpperCase()}</span>
             <h3>Dokončite platbu prevodom</h3>
-            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii.</p>
+            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii. Zobrazené sumy vychádzajú z návrhových cien; DPH je na kontrolu pri sadzbe 23 % a nie je potvrdené, či sumy DPH zahŕňajú alebo sú bez DPH.</p>
             <dl>
               <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
               <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
@@ -3786,6 +3862,7 @@ export function App() {
           <button className={`nav-link ${page === "profile" ? "active" : ""}`} onClick={() => setPage("profile")}><Pencil size={18} /> Môj profil</button>
           {isPlatformAdmin && <button className={`nav-link ${page === "admin" ? "active" : ""}`} onClick={() => { setPage("admin"); setAdminError(""); setAdminNotice(""); }}><Building2 size={18} /> Administrácia</button>}
           <button className="nav-link" onClick={() => { window.location.hash = "obchodne-podmienky"; }}><ShieldCheck size={18} /> Obchodné podmienky</button>
+          <button className="nav-link" onClick={() => { window.location.hash = "ochrana-osobnych-udajov"; }}><ShieldCheck size={18} /> Ochrana osobných údajov</button>
         </nav>
         <div className="sidebar-bottom">
           <button className="profile-row profile-open-button" onClick={() => setPage("profile")}><span className="avatar">{initials(profileName)}</span><span className="profile-name"><strong>{profileName}</strong><small>{activeMembership ? roleName(activeMembership.role) : "Bez firmy"}</small></span><Pencil size={14} /></button>

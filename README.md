@@ -100,6 +100,10 @@ Na zamietnutie sa použije rovnaký príkaz s `status = 'REJECTED'`. Klientská 
 
 Návrh slovenských obchodných podmienok sa zobrazuje cez verejný odkaz **Obchodné podmienky**. Text je pracovný návrh a pred zverejnením alebo používaním ako záväznej zmluvy vyžaduje kontrolu slovenským advokátom; osobitne treba pripraviť zmluvu o spracúvaní osobných údajov a zaznamenanie súhlasu pri registrácii/objednávke.
 
+Na verejnej stránke sú zobrazené identifikačné a kontaktné údaje, informácie o službe, cenové návrhy, obchodné podmienky a pracovný návrh zásad ochrany osobných údajov. Cenové návrhy Basic (19 €), Pro (39 €) a Team (69 €) nie sú aktívnou ponukou; nie je potvrdené, či sumy zahŕňajú DPH alebo sú bez DPH. Pred predajom treba potvrdiť DPH, doplniť úplné IČ DPH a vyplniť zvýraznené právne/prevádzkové miesta v dokumentoch. GoPay nie je integrovaný.
+
+Dodané originálne GoPay, Mastercard, Visa a 3D Secure podklady sú v [`public/bannerr3D/`](./public/bannerr3D/). GoPay SVG a odvodené PNG logá GoPay/Mastercard sa zobrazujú na verejnej stránke; pôvodné AI/EPS vektorové súbory sú zachované a Visa/EPS podklady sú dostupné na stiahnutie. Platby GoPay ani platby kartou zatiaľ nie sú aktívne. Zobrazenie loga ani dostupnosť podkladu nepotvrdzuje, že daná platobná metóda je zapojená.
+
 Vedúci môže mesačný prehľad vytlačiť alebo uložiť ako PDF cez **Vytlačiť / uložiť PDF** a následnú voľbu **Uložiť ako PDF** v dialógu tlače prehliadača.
 
 Workenu možno pridať na plochu telefónu: v **Safari na iPhone/iPade** vyberte **Zdieľať → Pridať na plochu**, v **Chrome na Androide** otvorte ponuku a vyberte **Nainštalovať aplikáciu** alebo **Pridať na plochu**. Aplikácia používa samostatnú ikonu a zobrazí sa bez panela prehliadača. Offline sa načíta len statická aplikácia; prihlásenie a firemné údaje vyžadujú internet.

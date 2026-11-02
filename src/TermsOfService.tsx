@@ -18,11 +18,15 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
           <h2>1. Prevádzkovateľ</h2>
           <p>Poskytovateľom služby Workena (ďalej len „Poskytovateľ“) je:</p>
           <address>
-            Roman Chlebovec - ROVOLT<br />
+            Roman Chlebovec<br />
+            Obchodné označenie: ROVOLT<br />
             IČO: 57875189<br />
+            DIČ: 1121595376<br />
+            IČ DPH: [DOPLNIŤ CELÉ IČ DPH]<br />
             Miesto podnikania: MPČĽ 3053/11, 058 01 Poprad, Slovenská republika<br />
             Zápis: Okresný úrad Poprad, číslo živnostenského registra 740-47346<br />
-            E-mail: <a href="mailto:info@rovolt.sk">info@rovolt.sk</a>
+            E-mail: <a href="mailto:info@rovolt.sk">info@rovolt.sk</a><br />
+            Telefón: <a href="tel:+421904826557">0904 826 557</a>
           </address>
         </section>
         <section>
@@ -49,7 +53,7 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
             Firma si ponecháva práva k údajom a obsahu, ktoré do Workeny vloží. Firma zodpovedá za to, že má právny základ na ich vloženie a spracúvanie vrátane údajov zamestnancov, fotografií a údajov o polohe alebo jazdách, a že dotknutým osobám poskytla potrebné informácie.
           </p>
           <p>
-            Ak Poskytovateľ spracúva osobné údaje v mene firmy, strany musia pred takým spracúvaním uzavrieť zmluvu o spracúvaní osobných údajov podľa článku 28 GDPR. Tieto obchodné podmienky takú zmluvu ani informačnú povinnosť firmy voči zamestnancom nenahrádzajú. Podrobnosti o spracúvaní Poskytovateľom musia byť uvedené v samostatných zásadách ochrany osobných údajov.
+            Ak Poskytovateľ spracúva osobné údaje v mene firmy, strany musia pred takým spracúvaním uzavrieť zmluvu o spracúvaní osobných údajov podľa článku 28 GDPR. Tieto obchodné podmienky takú zmluvu ani informačnú povinnosť firmy voči zamestnancom nenahrádzajú. Informácie o spracúvaní sú uvedené v <a href="#ochrana-osobnych-udajov">návrhu zásad ochrany osobných údajov</a>, ktorý treba pred zverejnením doplniť a právne overiť.
           </p>
           <p>
             Používateľ nahráva iba obsah, ktorý je oprávnený používať. Poskytovateľ môže odstrániť obsah, ktorého uchovávanie je podľa zákona zakázané alebo ktorý predstavuje odôvodnené bezpečnostné riziko, a podľa okolností o tom informuje firmu.
@@ -70,14 +74,35 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
             Balík, jeho funkcie, cena, mena, dĺžka obdobia a prípadné dane sa riadia údajmi zobrazenými v záväznej objednávke pred jej potvrdením. Návrhové alebo testovacie ceny nie sú ponukou, kým ich Poskytovateľ výslovne neoznačí ako dostupné na objednanie.
           </p>
           <p>
+            V aplikácii sú zobrazené návrhové ceny 19 €, 39 € a 69 € mesačne. Ich daňový status nie je potvrdený: nie je určené, či sumy zahŕňajú DPH alebo sú bez DPH. Sadzba 23 % je uvedená na kontrolu; pred sprístupnením záväznej ponuky treba potvrdiť daňové zaobchádzanie a výslednú cenu.
+          </p>
+          <p>
             Platba je splatná spôsobom a v lehote uvedenými pri objednávke. Samotné zobrazenie platobných údajov, vytvorenie QR kódu alebo odoslanie potvrdenia používateľom neznamená prijatie platby ani aktiváciu plateného balíka. Aktivácia nastane až po potvrdení platby Poskytovateľom alebo platobnou bránou podľa zobrazeného procesu.
+          </p>
+          <p>
+            Aktuálna aplikácia zobrazuje pri žiadosti o licenciu údaje na bankový prevod a platbu potvrdzuje správca Workena. Platobná brána GoPay ani platba kartou cez GoPay nie sú zapojené. Web aktuálne nemá automatický proces objednávky cez GoPay.
           </p>
           <p>
             Opakované predplatné a automatické obnovovanie vzniknú iba vtedy, ak sú pred dokončením objednávky jasne uvedené obdobie, cena, pravidlá obnovy a spôsob ukončenia a používateľ s nimi výslovne súhlasí. Zmenu ceny alebo podstatných vlastností aktívneho predplatného Poskytovateľ oznámi vopred; práva zákazníka ukončiť zmluvu podľa zákona zostávajú zachované.
           </p>
         </section>
         <section>
-          <h2>7. Ukončenie používania</h2>
+          <h2>7. Digitálna služba a dodanie</h2>
+          <p>
+            Workena je webová aplikácia, nie fyzický tovar. Služba sa používa cez webové rozhranie po prihlásení. Pri platenej licencii sa aktivácia vykoná až po potvrdení platby podľa aktuálneho postupu v aplikácii; presný okamih a lehota sprístupnenia platených funkcií sa musia uviesť pred prijatím objednávky.
+          </p>
+          <p>Fyzické doručenie tovaru sa neuskutočňuje a náklady na dopravu tovaru sa neuplatňujú.</p>
+          <p className="legal-placeholder">[DOPLNIŤ potvrdenú dobu aktivácie služby, prípadné prevádzkové obmedzenia a krajiny, v ktorých je služba dostupná. Potvrdiť, či sa uplatňujú exportné alebo územné obmedzenia.]</p>
+        </section>
+        <section>
+          <h2>8. Odstúpenie spotrebiteľa</h2>
+          <p>
+            Ak zákazník uzatvára zmluvu na diaľku ako spotrebiteľ a zákon mu priznáva právo na odstúpenie, môže od zmluvy odstúpiť bez uvedenia dôvodu do 14 dní od jej uzavretia. Uplatnenie práva a prípadné zákonné výnimky pri digitálnej službe závisia od konkrétnej objednávky a okolností uzavretia zmluvy.
+          </p>
+          <p className="legal-placeholder">[DOPLNIŤ postup a adresu na uplatnenie odstúpenia, spôsob vrátenia platieb, informácie o prípadnej žiadosti o začatie poskytovania služby počas lehoty a vzorový formulár. Právne overiť pred prijímaním objednávok od spotrebiteľov.]</p>
+        </section>
+        <section>
+          <h2>9. Ukončenie používania</h2>
           <p>
             Používateľ môže prestať službu používať a požiadať o zrušenie účtu e-mailom na <a href="mailto:info@rovolt.sk">info@rovolt.sk</a>. Pri platenom predplatnom sa uplatní spôsob ukončenia a fakturačné obdobie oznámené pri objednávke; ukončením sa neobchádzajú zákonné práva na odstúpenie alebo výpoveď.
           </p>
@@ -86,13 +111,13 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
           </p>
         </section>
         <section>
-          <h2>8. Duševné vlastníctvo</h2>
+          <h2>10. Duševné vlastníctvo</h2>
           <p>
             Workena, jej rozhranie, softvér a súvisiace materiály patria Poskytovateľovi alebo jeho poskytovateľom licencií. Počas používania služby získava zákazník nevýhradné, neprenosné oprávnenie používať ju na vlastné interné účely v rozsahu objednaného balíka. Tým nie sú dotknuté práva zákazníka k jeho vlastným údajom.
           </p>
         </section>
         <section>
-          <h2>9. Zodpovednosť</h2>
+          <h2>11. Zodpovednosť</h2>
           <p>
             Každá strana zodpovedá za škodu v rozsahu stanovenom právnymi predpismi. Nič v týchto podmienkach nevylučuje ani neobmedzuje zodpovednosť, ktorú podľa práva nemožno vylúčiť alebo obmedziť, vrátane zodpovednosti za úmyselne spôsobenú škodu, ublíženie na zdraví alebo kogentných spotrebiteľských práv.
           </p>
@@ -101,19 +126,23 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
           </p>
         </section>
         <section>
-          <h2>10. Podpora a reklamácie</h2>
+          <h2>12. Podpora a reklamácie</h2>
           <p>
             Otázky, oznámenia o bezpečnostnom incidente, sťažnosti a reklamácie možno poslať na <a href="mailto:info@rovolt.sk">info@rovolt.sk</a>. Uveďte názov firmy, prihlasovací e-mail, opis problému a požadovaný spôsob riešenia; neposielajte heslá ani citlivé platobné údaje. Poskytovateľ vybaví podanie v zákonných lehotách a podľa pravidiel uplatniteľných na konkrétneho zákazníka.
           </p>
+          <p>
+            Reklamáciu služby možno podať aj písomne na adresu prevádzkovateľa: Roman Chlebovec - ROVOLT, MPČĽ 3053/11, 058 01 Poprad, Slovensko. Uveďte prihlasovací e-mail, názov firmy, opis a dátum problému a požadovaný spôsob riešenia; ak sa týka platby, pripojte dostupný identifikátor žiadosti alebo variabilný symbol. Keďže Workena je digitálna služba a nie fyzický tovar, adresa na zasielanie reklamovaného tovaru sa neuplatňuje.
+          </p>
+          <p className="legal-placeholder">[DOPLNIŤ konkrétny postup informovania zákazníka o prijatí, priebehu a výsledku reklamácie a príslušné zákonné lehoty. Právne overiť, ak sa začne predaj spotrebiteľom.]</p>
         </section>
         <section>
-          <h2>11. Rozhodné právo a riešenie sporov</h2>
+          <h2>13. Rozhodné právo a riešenie sporov</h2>
           <p>
             Tieto podmienky sa riadia právnym poriadkom Slovenskej republiky. Spory sa strany pokúsia vyriešiť dohodou; tým nie je dotknuté právo obrátiť sa na príslušný súd ani kogentné pravidlá o príslušnosti a ochrane spotrebiteľa. Informácie o prípadnom mimosúdnom riešení spotrebiteľských sporov poskytne Poskytovateľ podľa právnych predpisov účinných v čase podania.
           </p>
         </section>
         <section>
-          <h2>12. Zmeny podmienok</h2>
+          <h2>14. Zmeny podmienok</h2>
           <p>
             Poskytovateľ môže podmienky meniť z právnych, bezpečnostných alebo prevádzkových dôvodov. O podstatnej zmene informuje zákazníka primerane vopred a uvedie dátum účinnosti. Ak zákazník so zmenou nesúhlasí, môže pred jej účinnosťou ukončiť používanie služby alebo predplatné spôsobom dovoleným právom. Pokračovanie v používaní po účinnosti zmien sa posudzuje podľa uplatniteľných právnych predpisov a okolností súhlasu zákazníka.
           </p>
@@ -121,6 +150,7 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
       </article>
       <footer className="terms-footer">
         <button className="back-link button-quiet" onClick={onBack}><ArrowLeft size={15} /> Späť na Workenu</button>
+        <a href="#ochrana-osobnych-udajov">Ochrana osobných údajov</a>
         <span>Roman Chlebovec - ROVOLT · IČO 57875189</span>
       </footer>
     </main>
