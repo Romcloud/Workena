@@ -345,7 +345,25 @@ button:disabled { opacity: .65; cursor: wait; }
 .assignment-notice-empty { margin: 0; }
 .work-order-create-panel { padding: 19px; }
 .work-order-form { margin-top: 0; }
-.work-order-list { display: grid; gap: 12px; }
+.work-order-create-modal { width: min(760px, 100%); max-height: min(90vh, 900px); overflow-y: auto; }
+.work-order-create-modal .modal-heading p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.work-order-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: thin; }
+.work-order-tab { display: inline-flex; min-height: 42px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 0 13px; border: 1px solid #e3e8e1; border-radius: 9px; color: #647065; background: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.work-order-tab b { display: grid; min-width: 20px; height: 20px; place-items: center; border-radius: 20px; color: #657365; background: #f0f3ef; font-size: 9px; }
+.work-order-tab.active { border-color: #9cbea5; color: var(--green-dark); background: #f0f7f0; }
+.work-order-tab.active b { color: #fff; background: var(--green); }
+.work-order-filter-bar { display: flex; max-width: 920px; align-items: end; gap: 12px; margin: 0 0 12px; padding: 12px; }
+.work-order-filter-bar .field { width: min(245px, 100%); margin: 0; }
+.work-order-filter-bar .button { margin-bottom: 1px; }
+.work-order-list { display: grid; max-width: 920px; gap: 9px; }
+.work-order-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: #6d786d; font-size: 10px; }
+.work-order-summary > span { display: inline-flex; align-items: center; gap: 5px; }
+.work-order-summary > button { margin-left: auto; }
+.work-order-returned-label { color: #a64e43; font-weight: 700; }
+.work-order-reassign-panel { display: grid; gap: 9px; padding: 10px 12px; border: 1px solid #f0ded8; border-radius: 8px; color: #80574e; background: #fff9f7; font-size: 10px; }
+.work-order-reassign-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.work-order-reassign-form select { min-width: 190px; }
+.work-order-reassign-panel small { color: #8d817d; }
 .work-order-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .work-order-calendar-expanded { width: calc(100vw - 300px); max-width: 1600px; min-height: 60vh; margin-left: 50%; transform: translateX(-50%); }
 .calendar-weekday { padding: 8px 10px; color: #7f887e; background: #f7f9f6; font-size: 10px; font-weight: 700; text-align: center; }
@@ -355,6 +373,8 @@ button:disabled { opacity: .65; cursor: wait; }
 .calendar-day-number { align-self: flex-end; color: #69736a; font-size: 10px; }
 .calendar-order { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #526454; background: #edf4eb; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-order-in_progress { color: #795f31; background: #faf1dc; }
+.calendar-order-measured { color: #5263a0; background: #eef0fb; }
+.calendar-order-working { color: #9a5c2b; background: #fbefe4; }
 .calendar-order-done { color: #346c4c; background: #e5f2e6; }
 .calendar-attendance { display: flex; align-items: center; gap: 4px; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #44617b; background: #eaf1f7; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-heading-actions, .customer-export-actions, .work-order-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
@@ -410,12 +430,14 @@ button:disabled { opacity: .65; cursor: wait; }
 .profile-plan-option > span:not(.pricing-proposal-name) { color: #737c72; font-size: 11px; }
 .profile-plan-selected { border-color: #75a584; box-shadow: 0 0 0 2px #75a5842b; }
 .profile-plan-current { color: var(--green-dark); font-weight: 700; }
-.work-order-card { display: grid; gap: 13px; padding: 19px; }
+.work-order-card { display: grid; gap: 10px; padding: 14px 16px; }
 .work-order-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .work-order-heading h2 { margin: 4px 0 0; font: 700 17px/1.35 var(--serif); }
 .work-order-status { flex: 0 0 auto; padding: 5px 9px; }
 .work-order-assigned { color: #6d7281; background: #f0f1f5; }
 .work-order-in_progress { color: #947344; background: #fbf3e2; }
+.work-order-measured { color: #5263a0; background: #eef0fb; }
+.work-order-working { color: #9a5c2b; background: #fbefe4; }
 .work-order-done { color: #397554; background: #eaf3e9; }
 .work-order-free { color: #6d7281; background: #f0f1f5; }
 .work-order-basic { color: #3a6ea5; background: #e9f1fb; }
@@ -675,7 +697,18 @@ button:disabled { opacity: .65; cursor: wait; }
   .attendance-history .history-employee-row { grid-template-columns: 34px minmax(0, 1fr) auto 30px; }
   .attendance-history .employee-hours-total { font-size: 10px; }
   .attendance-history .employee-hours-count { font-size: 8px; }
-  .work-order-create-panel, .work-order-card { padding: 15px; }
+  .work-order-create-panel, .work-order-card { padding: 13px; }
+  .work-order-create-modal { max-height: 88vh; padding: 15px; }
+  .work-order-filter-bar { align-items: stretch; flex-direction: column; }
+  .work-order-filter-bar .field { width: 100%; }
+  .work-order-summary { align-items: flex-start; }
+  .work-order-summary > button { margin-left: 0; }
+  .work-order-accept-panel { align-items: flex-start; flex-direction: column; }
+  .work-order-reassign-form { align-items: stretch; flex-direction: column; }
+  .work-order-reassign-form select { min-width: 0; width: 100%; }
+  .work-order-reassign-form .button { width: 100%; }
+  .work-order-create-modal input[type="date"],
+  .work-order-create-modal input[type="time"] { width: 100%; min-width: 0; min-height: 44px; }
   .work-order-calendar-expanded { width: calc(100vw - 56px); margin-left: 50%; }
   .customer-toolbar { grid-template-columns: 1fr; }
   .permissions-member-row { grid-template-columns: 34px minmax(0, 1fr) auto; }

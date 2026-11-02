@@ -170,8 +170,12 @@ async function createTestPayment(request: Request, origin: string) {
       amount: details.amountEur * 100,
       currency: "EUR",
       order_number: orderNumber,
-      order_description: `Testovacia platba Workena ${details.name} - cena vratane DPH 23 %`,
-      items: [{ name: `Workena ${details.name} - test`, amount: details.amountEur * 100, count: 1 }],
+      order_description: `Testovacia mesacna opakovana platba Workena ${details.name} - cena vratane DPH 23 %`,
+      items: [{ name: `Workena ${details.name} - mesacny sandbox test`, amount: details.amountEur * 100, count: 1 }],
+      recurrence: {
+        recurrence_cycle: "MONTH",
+        recurrence_period: 1,
+      },
       callback: {
         return_url: `${APP_ORIGIN}/?gopay_test=return&order_number=${encodeURIComponent(orderNumber)}`,
         notification_url: `${SUPABASE_URL}/functions/v1/gopay-test?notification=1`,

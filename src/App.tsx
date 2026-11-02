@@ -168,7 +168,15 @@ function statusName(status: EntryStatus) {
 }
 
 function workOrderStatusName(status: WorkOrderStatus) {
-  return status === "DONE" ? "Hotové" : status === "IN_PROGRESS" ? "Rozpracované" : "Priradené";
+  return status === "DONE"
+    ? "Dokončené"
+    : status === "WORKING"
+      ? "Pracuje sa"
+      : status === "MEASURED"
+        ? "Zamerané"
+        : status === "IN_PROGRESS"
+          ? "Rozpracované"
+          : "Pridelené";
 }
 
 function customerStatusName(status: CustomerStatus) {
@@ -307,6 +315,11 @@ export function App() {
   const [customerOwnerId, setCustomerOwnerId] = useState("ALL");
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<string | null>(null);
+  const [workOrderTab, setWorkOrderTab] = useState("SENT");
+  const [workOrderSort, setWorkOrderSort] = useState<"DUE" | "ASSIGNED">("DUE");
+  const [workOrderDateFilter, setWorkOrderDateFilter] = useState("");
+  const [showWorkOrderForm, setShowWorkOrderForm] = useState(false);
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([""]);
   const [expandedDashboardOrderId, setExpandedDashboardOrderId] = useState<string | null>(null);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
@@ -429,8 +442,8 @@ export function App() {
       setGopayTestMessage(paymentError
         ? `Stav testovacej platby sa nepodarilo overiť: ${paymentError.message}`
         : data?.status === "PAID"
-          ? "Testovacia platba GoPay bola úspešne dokončená. Licencia sa testovacou platbou neaktivovala."
-          : `Testovacia platba GoPay má stav: ${data?.status ?? "neznámy"}. Licencia sa neaktivovala.`);
+          ? "Prvá testovacia platba GoPay bola úspešne dokončená. Mesačné opakovanie bolo odoslané iba do sandboxu; licencia ani produkčné predplatné sa neaktivovali."
+          : `Prvá testovacia GoPay platba má stav: ${data?.status ?? "neznámy"}. Licencia ani produkčné predplatné sa neaktivovali.`);
       window.history.replaceState({}, "", window.location.pathname);
     }).catch((paymentError: unknown) => {
       if (!active) return;
@@ -525,9 +538,19 @@ export function App() {
         setMemberships([]);
         return;
       }
+      const activeCompanyIds = [...new Set(memberList.filter((member) => member.active).map((member) => member.company_id))];
+      const trialSyncResults = await Promise.all(activeCompanyIds.map((companyId) =>
+        client.rpc("sync_company_pro_trial", { p_company_id: companyId }),
+      ));
+      if (!alive) return;
+      const trialSyncError = trialSyncResults.find((result) => result.error)?.error;
+      if (trialSyncError) {
+        setError(trialSyncError.message);
+        return;
+      }
       const { data: companyRows, error: companyError } = await client
         .from("companies")
-        .select("id, name, plan, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
+        .select("id, name, plan, pro_trial_started_at, pro_trial_ends_at, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
         .in("id", memberList.map((member) => member.company_id));
       if (!alive) return;
       if (companyError) {
@@ -555,6 +578,47 @@ export function App() {
       alive = false;
     };
   }, [client, session]);
+
+  useEffect(() => {
+    const trialEndsAt = activeMembership?.company.pro_trial_ends_at;
+    if (!client || !activeCompanyId || !activeMembership?.active || !trialEndsAt) return;
+
+    let alive = true;
+    const refreshAtExpiry = async () => {
+      const { error: syncError } = await client.rpc("sync_company_pro_trial", {
+        p_company_id: activeCompanyId,
+      });
+      if (!alive) return;
+      if (syncError) {
+        setError(syncError.message);
+        return;
+      }
+      const { data, error: companyError } = await client
+        .from("companies")
+        .select("plan, pro_trial_started_at, pro_trial_ends_at")
+        .eq("id", activeCompanyId)
+        .single();
+      if (!alive) return;
+      if (companyError) {
+        setError(companyError.message);
+        return;
+      }
+      setMemberships((current) => current.map((membership) =>
+        membership.company_id === activeCompanyId
+          ? { ...membership, company: { ...membership.company, ...data } }
+          : membership,
+      ));
+    };
+
+    const timeout = window.setTimeout(
+      () => void refreshAtExpiry(),
+      Math.max(0, new Date(trialEndsAt).getTime() - Date.now() + 1000),
+    );
+    return () => {
+      alive = false;
+      window.clearTimeout(timeout);
+    };
+  }, [activeCompanyId, activeMembership?.active, activeMembership?.company.pro_trial_ends_at, client]);
 
   useEffect(() => {
     if (!client || !activeCompanyId || !isManager) {
@@ -678,6 +742,38 @@ export function App() {
     window.location.assign(data.paymentUrl);
   };
 
+  const startProTrial = async () => {
+    if (!client || !activeCompanyId || !isCompanyOwner || !activeMembership?.active) return;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    const { error: trialError } = await client.rpc("start_company_pro_trial", {
+      p_company_id: activeCompanyId,
+    });
+    if (trialError) {
+      setError(trialError.message);
+      setBusy(false);
+      return;
+    }
+
+    const { data, error: companyError } = await client
+      .from("companies")
+      .select("plan, pro_trial_started_at, pro_trial_ends_at")
+      .eq("id", activeCompanyId)
+      .single();
+    if (companyError) {
+      setError(companyError.message);
+    } else {
+      setMemberships((current) => current.map((membership) =>
+        membership.company_id === activeCompanyId
+          ? { ...membership, company: { ...membership.company, ...data } }
+          : membership,
+      ));
+      setNotice("Skúšobná verzia Workena Pro je aktívna 30 dní. Po jej skončení sa firma automaticky vráti na Free.");
+    }
+    setBusy(false);
+  };
+
   const refreshWorkOrders = useCallback(async () => {
     if (!client || !activeCompanyId) return;
     if (workOrdersCompany.current !== activeCompanyId) {
@@ -700,7 +796,7 @@ export function App() {
     }
     const { data: assignmentRows, error: assignmentError } = await client
       .from("work_order_assignees")
-      .select("work_order_id, company_id, user_id, accepted_at, created_at")
+      .select("work_order_id, company_id, user_id, accepted_at, declined_at, reassigned_at, created_at")
       .in("work_order_id", orders.map((order) => order.id));
     if (request !== workOrderRequest.current) return;
     if (assignmentError) throw assignmentError;
@@ -1093,7 +1189,7 @@ export function App() {
         const memberRows = (refreshed ?? []) as Membership[];
         const { data: companyRows, error: companyError } = await client
           .from("companies")
-          .select("id, name, plan, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
+          .select("id, name, plan, pro_trial_started_at, pro_trial_ends_at, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
           .in("id", memberRows.map((membership) => membership.company_id));
         if (companyError) setError(companyError.message);
         else {
@@ -1489,6 +1585,7 @@ export function App() {
       await refreshWorkOrders();
       formElement.reset();
       setSelectedAssigneeIds([""]);
+      setShowWorkOrderForm(false);
       setNotice(isManager
         ? "Zákazka bola priradená vybraným zamestnancom. Po prijatí sa zobrazí jej potvrdený stav."
         : "Zákazka bola pridaná do vášho kalendára.");
@@ -1511,6 +1608,50 @@ export function App() {
       if (acceptError) throw acceptError;
       await refreshWorkOrders();
       setNotice("Zákazku ste prijali.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rejectWorkOrder = async (workOrderId: string) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: rejectError } = await client.rpc("reject_work_order_assignment", {
+        p_work_order_id: workOrderId,
+      });
+      if (rejectError) throw rejectError;
+      await refreshWorkOrders();
+      setNotice("Zákazku ste odmietli a vlastníkovi alebo vedúcemu sa zobrazí medzi vrátenými.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reassignDeclinedWorkOrder = async (event: FormEvent<HTMLFormElement>, order: WorkOrder) => {
+    event.preventDefault();
+    if (!client) return;
+    const assigneeId = String(new FormData(event.currentTarget).get("assignee_id") ?? "");
+    if (!assigneeId) {
+      setError("Vyberte zamestnanca, ktorému chcete zákazku prideliť.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error: reassignError } = await client.rpc("reassign_declined_work_order", {
+        p_work_order_id: order.id,
+        p_assignee_id: assigneeId,
+      });
+      if (reassignError) throw reassignError;
+      await refreshWorkOrders();
+      setNotice("Zákazka bola pridelená ďalšiemu zamestnancovi.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -2074,7 +2215,7 @@ export function App() {
       const memberRows = (refreshed ?? []) as Membership[];
       const { data: companyRows, error: companyError } = await client
         .from("companies")
-        .select("id, name, plan, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
+        .select("id, name, plan, pro_trial_started_at, pro_trial_ends_at, selected_plan, billing_name, billing_ico, billing_dic, billing_ic_dph, billing_address")
         .in("id", memberRows.map((membership) => membership.company_id));
       if (companyError) throw companyError;
       const companyById = new Map(((companyRows ?? []) as Company[]).map((company) => [company.id, company]));
@@ -2138,7 +2279,15 @@ export function App() {
         delete next[workOrderId];
         return next;
       });
-      setNotice(status === "DONE" ? "Zákazka a výkaz boli odoslané ako hotové." : "Výkaz zákazky bol uložený.");
+      setNotice(status === "DONE"
+        ? "Zákazka a výkaz boli označené ako dokončené."
+        : status === "MEASURED" && activeMembership?.is_salesperson
+          ? "Zákazka je zameraná a presunula sa medzi vybavené."
+          : status === "MEASURED"
+            ? "Zákazka bola označená ako zameraná."
+            : status === "WORKING"
+              ? "Stav zákazky je Pracuje sa."
+              : "Stav zákazky je Rozpracované.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -2826,7 +2975,7 @@ export function App() {
         </section>
         <section className="landing-payments">
           <strong>Testovacia verzia GoPay a platobné podklady</strong>
-          <p>GoPay sandbox integrácia sa pripravuje na schválenie. Testovací checkout bude dostupný vlastníkovi firmy po nakonfigurovaní GoPay testovacích údajov; testovacia platba neaktivuje licenciu. Produkčné platby zatiaľ nie sú zapnuté.</p>
+          <p>GoPay sandbox integrácia sa pripravuje na schválenie vrátane testu mesačného opakovania platieb. Checkout bude dostupný vlastníkovi firmy po nakonfigurovaní GoPay testovacích údajov; testovacia platba neaktivuje licenciu. Produkčné platby zatiaľ nie sú zapnuté.</p>
           <div className="payment-brand-assets" aria-label="Grafické podklady GoPay a platobných značiek">
             <img className="payment-brand-gopay" src="/bannerr3D/gopay-banner-colorfull.svg" alt="GoPay" />
             <img src="/bannerr3D/mastercard.png" alt="Mastercard" />
@@ -3116,6 +3265,50 @@ export function App() {
   const renderWorkOrders = () => {
     const employees = roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.is_employee));
     const today = localDateKey(new Date().toISOString());
+    const measuredBySalesperson = (order: WorkOrder) => order.status === "MEASURED"
+      && (order.assignees ?? []).some((assignment) => assignment.accepted_at && !assignment.declined_at
+        && roster.some((member) => member.user_id === assignment.user_id && member.is_salesperson));
+    const categories = isManager
+      ? [
+        { id: "SENT", label: "Poslané zamestnancom", count: workOrders.filter((order) => order.status !== "DONE" && (order.assignees ?? []).some((assignment) => !assignment.accepted_at && !assignment.declined_at)).length },
+        { id: "RETURNED", label: "Vrátené", count: workOrders.filter((order) => order.status !== "DONE" && (order.assignees ?? []).some((assignment) => assignment.declined_at && !assignment.reassigned_at)).length },
+        { id: "ACCEPTED", label: "Prijaté", count: workOrders.filter((order) => order.status === "ASSIGNED" && (order.assignees ?? []).some((assignment) => assignment.accepted_at && !assignment.declined_at)).length },
+        { id: "WORKING", label: "Pracuje sa", count: workOrders.filter((order) => ["IN_PROGRESS", "WORKING"].includes(order.status) || order.status === "MEASURED" && !measuredBySalesperson(order)).length },
+        { id: "DONE", label: "Vybavené", count: workOrders.filter((order) => order.status === "DONE" || measuredBySalesperson(order)).length },
+      ]
+      : [
+        { id: "SENT", label: "Pridelené", count: workOrders.filter((order) => (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id && !assignment.accepted_at && !assignment.declined_at)).length },
+        { id: "MINE", label: "Moje", count: workOrders.filter((order) => (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id && assignment.accepted_at && !assignment.declined_at) && order.status !== "DONE" && !(activeMembership?.is_salesperson && order.status === "MEASURED")).length },
+        { id: "RETURNED", label: "Odmietnuté", count: workOrders.filter((order) => (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id && assignment.declined_at)).length },
+        { id: "DONE", label: "Vybavené", count: workOrders.filter((order) => ((order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id && !assignment.declined_at) && order.status === "DONE") || (activeMembership?.is_salesperson && (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id && assignment.accepted_at && !assignment.declined_at) && order.status === "MEASURED")).length },
+      ];
+    const filteredWorkOrders = workOrders.filter((order) => {
+      const currentAssignment = (order.assignees ?? []).find((assignment) => assignment.user_id === session?.user.id);
+      if (workOrderDateFilter && order.due_date !== workOrderDateFilter) return false;
+      if (workOrderTab === "ALL") return true;
+      if (workOrderTab === "SENT") return isManager
+        ? order.status !== "DONE" && (order.assignees ?? []).some((assignment) => !assignment.accepted_at && !assignment.declined_at)
+        : Boolean(currentAssignment && !currentAssignment.accepted_at && !currentAssignment.declined_at);
+      if (workOrderTab === "RETURNED") return isManager
+        ? order.status !== "DONE" && (order.assignees ?? []).some((assignment) => assignment.declined_at && !assignment.reassigned_at)
+        : Boolean(currentAssignment?.declined_at);
+      if (workOrderTab === "ACCEPTED") return order.status === "ASSIGNED" && (order.assignees ?? []).some((assignment) => assignment.accepted_at && !assignment.declined_at);
+      if (workOrderTab === "WORKING") return ["IN_PROGRESS", "WORKING"].includes(order.status) || order.status === "MEASURED" && !measuredBySalesperson(order);
+      if (workOrderTab === "MINE") return Boolean(currentAssignment?.accepted_at && !currentAssignment.declined_at) && order.status !== "DONE" && !(activeMembership?.is_salesperson && order.status === "MEASURED");
+      if (workOrderTab === "DONE") return isManager
+        ? order.status === "DONE" || measuredBySalesperson(order)
+        : Boolean(currentAssignment && !currentAssignment.declined_at && (order.status === "DONE" || currentAssignment.accepted_at && activeMembership?.is_salesperson && order.status === "MEASURED"));
+      return true;
+    }).sort((left, right) => {
+      if (workOrderSort === "DUE") {
+        return left.due_date.localeCompare(right.due_date) || (left.starts_at ?? "").localeCompare(right.starts_at ?? "");
+      }
+      const getAssignmentDate = (order: WorkOrder) => {
+        const matchingAssignments = (order.assignees ?? []).filter((assignment) => isManager || assignment.user_id === session?.user.id);
+        return matchingAssignments.map((assignment) => assignment.created_at).sort()[0] ?? order.created_at;
+      };
+      return getAssignmentDate(left).localeCompare(getAssignmentDate(right));
+    });
     const calendarMonthStart = new Date(`${workOrderMonth}-01T12:00:00`);
     const calendarOffset = (calendarMonthStart.getDay() + 6) % 7;
     const calendarDayCount = new Date(calendarMonthStart.getFullYear(), calendarMonthStart.getMonth() + 1, 0).getDate();
@@ -3129,16 +3322,25 @@ export function App() {
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
-          <div><span className="eyebrow">PRÁCA V TERÉNE</span><h1>Úlohy a zákazky</h1><p>Zadania, termíny a aktuálny stav práce na jednotlivých zákazkách.</p></div>
+          <div><span className="eyebrow">PRÁCA V TERÉNE</span><h1>Zákazky</h1><p>Priraďovanie, termíny a priebeh práce na jednotlivých zákazkách.</p></div>
+          <button className="button button-primary" onClick={() => setShowWorkOrderForm(true)}><Plus size={16} /> Nová zákazka</button>
         </header>
-        {isManager && <section className="panel work-order-create-panel">
-          <div className="panel-heading"><div><h2><Plus size={17} /> Priradiť novú zákazku</h2><p>Zákazka sa zobrazí každému vybranému pracovníkovi a čaká na jeho prijatie.</p></div></div>
-          {employees.length === 0
+        <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
+          {categories.map((category) => <button key={category.id} type="button" className={`work-order-tab ${workOrderTab === category.id ? "active" : ""}`} onClick={() => setWorkOrderTab(category.id)}>
+            <span>{category.label}</span><b>{category.count}</b>
+          </button>)}
+        </nav>
+        {showWorkOrderForm && <div className="modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowWorkOrderForm(false);
+        }}>
+          <section className="panel work-order-create-panel work-order-create-modal" role="dialog" aria-modal="true" aria-labelledby="new-work-order-title">
+            <div className="modal-heading"><div><span className="eyebrow">ZÁKAZKY</span><h2 id="new-work-order-title">{isManager ? "Priradiť novú zákazku" : "Pridať vlastnú zákazku"}</h2><p>{isManager ? "Zamestnanec zákazku prijme alebo odmietne." : "Nová zákazka sa pridá do vášho zoznamu."}</p></div><button type="button" className="logout-button" aria-label="Zavrieť formulár" onClick={() => setShowWorkOrderForm(false)}><X size={18} /></button></div>
+          {isManager && employees.length === 0
             ? <p className="muted">Najskôr pridajte do tímu aktívneho zamestnanca.</p>
             : <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
               <div className="form-grid">
                 <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Elektroinštalácia rodinného domu" required /></label>
-                <div className="field">
+                {isManager && <div className="field">
                   <span>Priradiť zamestnancom</span>
                   <div className="assignee-picker">
                     {selectedAssigneeIds.map((assigneeId, index) => <div className="assignee-picker-row" key={`assignee-${index}`}>
@@ -3149,11 +3351,10 @@ export function App() {
                       {selectedAssigneeIds.length > 1 && <button type="button" className="button button-outline button-small" aria-label="Odobrať zamestnanca" onClick={() => setSelectedAssigneeIds((current) => current.filter((_, row) => row !== index))}><X size={14} /></button>}
                     </div>)}
                     <button type="button" className="button button-outline button-small" onClick={() => setSelectedAssigneeIds((current) => current.length < employees.length ? [...current, ""] : current)} disabled={selectedAssigneeIds.length >= employees.length}><Plus size={14} /> Ďalší zamestnanec</button>
-                    {selectedAssigneeIds.length >= employees.length && <small className="muted">Všetci dostupní zamestnanci sú pridaní.</small>}
                   </div>
-                </div>
+                </div>}
                 <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
-                <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
+                <label className="field"><span>Dátum</span><input type="date" name="due_date" defaultValue={today} required /></label>
                 <label className="field"><span>Čas od <small>voliteľné</small></span><input type="time" name="starts_at" /></label>
                 <label className="field"><span>Čas do <small>voliteľné</small></span><input type="time" name="ends_at" /></label>
                 <label className="permission-toggle"><input type="checkbox" name="time_to_arrange" /> Čas treba dohodnúť</label>
@@ -3161,28 +3362,10 @@ export function App() {
               </div>
               <label className="field"><span>Opis práce</span><textarea name="description" rows={4} minLength={2} maxLength={4000} placeholder="Rozsah prác, dôležité pokyny a informácie…" required /></label>
               {error && <p className="form-error" role="alert">{error}</p>}
-              {notice && <p className="invite-success" role="status">{notice}</p>}
-              <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Priraďujem…" : "Priradiť zákazku"}</button></div>
+              <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setShowWorkOrderForm(false)}>Zrušiť</button><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Ukladám…" : "Uložiť zákazku"}</button></div>
             </form>}
-        </section>}
-        {!isManager && <section className="panel work-order-create-panel">
-          <div className="panel-heading"><div><h2><Plus size={17} /> Pridať vlastnú zákazku do kalendára</h2><p>Zákazka sa rovno zobrazí ako vaša, bez čakania na potvrdenie.</p></div></div>
-          <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
-            <div className="form-grid">
-              <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Oprava kotla" required /></label>
-              <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
-              <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
-              <label className="field"><span>Čas od <small>voliteľné</small></span><input type="time" name="starts_at" /></label>
-              <label className="field"><span>Čas do <small>voliteľné</small></span><input type="time" name="ends_at" /></label>
-              <label className="permission-toggle"><input type="checkbox" name="time_to_arrange" /> Čas treba dohodnúť</label>
-              <label className="field"><span>Telefón <small>voliteľné</small></span><input type="tel" name="contact_phone" maxLength={40} placeholder="+421 900 000 000" /></label>
-            </div>
-            <label className="field"><span>Opis práce</span><textarea name="description" rows={4} minLength={2} maxLength={4000} placeholder="Rozsah prác, dôležité pokyny a informácie…" required /></label>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            {notice && <p className="invite-success" role="status">{notice}</p>}
-            <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Pridávam…" : "Pridať zákazku"}</button></div>
-          </form>
-        </section>}
+          </section>
+        </div>}
         <section className="records-section">
           <div className="section-title-row">
             <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Termíny všetkých zákaziek v mesiaci.</p></div>
@@ -3239,26 +3422,58 @@ export function App() {
           </div>
         </section>
         <section className="records-section">
-          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Zoznam zákaziek</h2><p>{isManager ? "Zákazky celej firmy." : "Zákazky priradené vám."}</p></div><span className="count-pill">{workOrders.length} zákaziek</span></div>
+          <div className="section-title-row"><div><h2><ClipboardList size={17} /> Zoznam zákaziek</h2><p>{isManager ? "Zákazky celej firmy." : "Zákazky priradené vám."}</p></div><span className="count-pill">{filteredWorkOrders.length} zákaziek</span></div>
+          <div className="panel work-order-filter-bar">
+            <label className="field"><span>Usporiadať podľa</span><select value={workOrderSort} onChange={(event) => setWorkOrderSort(event.target.value as "DUE" | "ASSIGNED")}><option value="DUE">Najbližšieho termínu</option><option value="ASSIGNED">Dátumu pridelenia</option></select></label>
+            <label className="field"><span>Filtrovať podľa termínu</span><input type="date" value={workOrderDateFilter} onChange={(event) => setWorkOrderDateFilter(event.target.value)} /></label>
+            {workOrderDateFilter && <button className="button button-quiet button-small" onClick={() => setWorkOrderDateFilter("")}>Zrušiť filter</button>}
+          </div>
           {workOrders.length === 0
             ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne zákazky</strong><p>{isManager ? "Priraďte prvú zákazku pracovníkovi." : "Keď vám vlastník priradí zákazku, zobrazí sa tu."}</p></div>
-            : <div className="work-order-list">{workOrders.map((workOrder) => {
+            : filteredWorkOrders.length === 0
+              ? <div className="panel empty-state"><strong>V tejto podkarte nie sú zákazky</strong><p>Zmeňte filter alebo vyberte inú podkartu.</p></div>
+              : <div className="work-order-list">{filteredWorkOrders.map((workOrder) => {
               const assignments = workOrder.assignees ?? [];
               const assigneeMembers = assignments.map((assignment) => ({
                 assignment,
                 member: roster.find((person) => person.user_id === assignment.user_id),
               }));
               const currentAssignment = assignments.find((assignment) => assignment.user_id === session?.user.id);
-              const canUpdate = currentAssignment?.accepted_at !== null && currentAssignment !== undefined;
-              const needsAcceptance = currentAssignment && !currentAssignment.accepted_at;
+              const canUpdate = currentAssignment?.accepted_at !== null && currentAssignment !== undefined && !currentAssignment.declined_at;
+              const needsAcceptance = currentAssignment && workOrder.status !== "DONE" && !currentAssignment.accepted_at && !currentAssignment.declined_at;
               const overdue = workOrder.status !== "DONE" && workOrder.due_date < today;
               const canManageOrder = isManager || workOrder.created_by === session?.user.id;
               const phoneDigits = workOrder.contact_phone?.replace(/\D/g, "") ?? "";
+              const isExpanded = expandedWorkOrderId === workOrder.id;
+              const canReassignTo = employees.filter((employee) => !assignments.some((assignment) => assignment.user_id === employee.user_id));
               return <article className="panel work-order-card" id={`work-order-${workOrder.id}`} key={workOrder.id}>
                 <div className="work-order-heading">
                   <div><span className="eyebrow">ZÁKAZKA</span><h2>{workOrder.title}</h2></div>
                   <span className={`status-pill work-order-status work-order-${workOrder.status.toLowerCase()}`}>{workOrderStatusName(workOrder.status)}</span>
                 </div>
+                <div className="work-order-summary">
+                  <span className={overdue ? "work-order-overdue" : ""}><CalendarDays size={14} />{dateLabel(`${workOrder.due_date}T12:00:00`)}{workOrder.starts_at ? ` · ${workOrder.starts_at.slice(0, 5)}` : workOrder.time_to_arrange ? " · dohodnúť čas" : ""}</span>
+                  {currentAssignment?.declined_at && <span className="work-order-returned-label">Odmietnutá</span>}
+                  {needsAcceptance && <span>Čaká na vaše rozhodnutie</span>}
+                  <button type="button" className="button button-outline button-small" aria-expanded={isExpanded} onClick={() => setExpandedWorkOrderId((current) => current === workOrder.id ? null : workOrder.id)}>{isExpanded ? "Skryť podrobnosti" : "Zobraziť podrobnosti"}{isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+                </div>
+                {needsAcceptance && <div className="work-order-accept-panel">
+                  <span>Zákazka čaká na vaše potvrdenie.</span>
+                  <div className="work-order-actions">
+                    <button className="button button-primary button-small" disabled={busy} onClick={() => void acceptWorkOrder(workOrder.id)}>Prijať zákazku</button>
+                    <button className="button button-danger button-small" disabled={busy} onClick={() => void rejectWorkOrder(workOrder.id)}>Odmietnuť zákazku</button>
+                  </div>
+                </div>}
+                {isManager && workOrder.status !== "DONE" && assignments.some((assignment) => assignment.declined_at && !assignment.reassigned_at) && <div className="work-order-reassign-panel">
+                  <span>Zákazku odmietol zamestnanec: {assigneeMembers.filter(({ assignment }) => assignment.declined_at && !assignment.reassigned_at).map(({ member }) => member?.full_name || member?.email || "Zamestnanec").join(", ")}.</span>
+                  {canReassignTo.length > 0
+                    ? <form className="work-order-reassign-form" onSubmit={(event) => void reassignDeclinedWorkOrder(event, workOrder)}>
+                      <select name="assignee_id" aria-label="Prideliť zákazku ďalšiemu zamestnancovi" defaultValue="" required><option value="" disabled>Vybrať zamestnanca</option>{canReassignTo.map((employee) => <option key={employee.user_id} value={employee.user_id}>{employee.full_name || employee.email}</option>)}</select>
+                      <button className="button button-outline button-small" disabled={busy}>Prideliť inému</button>
+                    </form>
+                    : <small>Všetci dostupní zamestnanci už majú túto zákazku.</small>}
+                </div>}
+                {isExpanded && <>
                 <div className="work-order-meta">
                   <span><MapPin size={14} />{workOrder.address}</span>
                   <span className={overdue ? "work-order-overdue" : ""}><Clock3 size={14} />Termín: {dateLabel(`${workOrder.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
@@ -3266,7 +3481,7 @@ export function App() {
                     ? <span><Clock3 size={14} />Čas treba dohodnúť</span>
                     : (workOrder.starts_at || workOrder.ends_at) && <span><Clock3 size={14} />{workOrder.starts_at?.slice(0, 5) ?? "—"} – {workOrder.ends_at?.slice(0, 5) ?? "—"}</span>}
                   <span><Users size={14} />{assigneeMembers.length
-                    ? assigneeMembers.map(({ assignment, member }) => `${member?.full_name || member?.email || "Bývalý zamestnanec"} · ${assignment.accepted_at ? "prijatá" : "čaká na prijatie"}`).join(", ")
+                    ? assigneeMembers.map(({ assignment, member }) => `${member?.full_name || member?.email || "Bývalý zamestnanec"} · ${assignment.declined_at ? "odmietnutá" : assignment.accepted_at ? "prijatá" : "čaká na prijatie"}`).join(", ")
                     : roster.find((member) => member.user_id === workOrder.assignee_id)?.full_name || roster.find((member) => member.user_id === workOrder.assignee_id)?.email || "Bývalý zamestnanec"}</span>
                 </div>
                 <p className="work-order-description">{workOrder.description}</p>
@@ -3306,10 +3521,6 @@ export function App() {
                   {error && <p className="form-error" role="alert">{error}</p>}
                   <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setEditingScheduleOrderId(null)}>Zrušiť</button><button className="button button-primary button-small" disabled={busy}>{busy ? "Ukladám…" : "Uložiť termín"}</button></div>
                 </form>}
-                {needsAcceptance && <div className="work-order-accept-panel">
-                  <span>Zákazka čaká na vaše potvrdenie.</span>
-                  <button className="button button-primary button-small" disabled={busy} onClick={() => void acceptWorkOrder(workOrder.id)}>Prijať zákazku</button>
-                </div>}
                 {(workOrder.employee_materials || workOrder.work_report || workOrder.employee_note) && <div className="work-order-report">
                   <strong>Výkaz zákazky</strong>
                   {workOrder.report_submitted_at && <small>Odoslaný {dateLabel(workOrder.report_submitted_at)}</small>}
@@ -3347,7 +3558,7 @@ export function App() {
                 </div>
                 {canUpdate && <form className="work-order-update" onSubmit={(event) => void updateWorkOrder(event, workOrder.id)}>
                   <div className="work-order-update-fields">
-                    <label className="field"><span>Stav zákazky</span><select name="status" defaultValue={workOrder.status === "DONE" ? "DONE" : "IN_PROGRESS"}><option value="IN_PROGRESS">Rozpracované</option><option value="DONE">Hotové</option></select></label>
+                    <label className="field"><span>Stav zákazky</span><select name="status" defaultValue={workOrder.status === "ASSIGNED" ? "IN_PROGRESS" : workOrder.status}><option value="IN_PROGRESS">Rozpracované</option><option value="MEASURED">Zamerané</option><option value="WORKING">Pracuje sa</option><option value="DONE">Dokončené</option></select></label>
                     <label className="field"><span>Použitý materiál <small>voliteľné</small></span><textarea name="employee_materials" rows={2} maxLength={4000} defaultValue={workOrder.employee_materials ?? ""} placeholder="Materiály a množstvá…" /></label>
                     <label className="field"><span>Výkaz vykonanej práce <small>povinný pri dokončení</small></span><textarea name="work_report" rows={3} maxLength={4000} defaultValue={workOrder.work_report ?? ""} placeholder="Popíšte vykonané práce a výsledok…" /></label>
                     <label className="field"><span>Poznámka pre vlastníka <small>voliteľné</small></span><textarea name="employee_note" rows={2} maxLength={2000} defaultValue={workOrder.employee_note ?? ""} placeholder="Doplňujúca informácia k priebehu…" /></label>
@@ -3355,6 +3566,7 @@ export function App() {
                   {error && <p className="form-error" role="alert">{error}</p>}
                   <div className="form-actions"><button className="button button-primary button-small" disabled={busy}>{busy ? "Ukladám…" : workOrder.status === "DONE" ? "Uložiť výkaz" : "Uložiť výkaz zákazky"}</button></div>
                 </form>}
+                </>}
               </article>;
             })}</div>}
         </section>
@@ -3614,9 +3826,24 @@ export function App() {
         </div>
       </section>
       {isManager && activeMembership && <section className={`panel plan-card ${activeMembership.company.plan !== "FREE" ? "plan-card-pro" : ""}`}>
-        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span><h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2><p>{activeMembership.company.plan !== "FREE" ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.` : `Používate ${roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.role === "ACCOUNTANT" && member.is_employee)).length} z 2 zamestnaneckých miest.`}</p></div>
-        <div className="plan-card-price"><strong>{COMPANY_PLAN_LABELS[activeMembership.company.plan]}</strong><span>{activeMembership.company.plan !== "FREE" ? "stav účtu" : "aktuálny účet"}</span></div>
-        <p className="plan-card-note">Licenciu prideľuje správca Workena po potvrdení platby.</p>
+        <div className="plan-card-copy">
+          <span className="eyebrow">{activeMembership.company.pro_trial_ends_at ? "SKÚŠOBNÁ VERZIA PRO" : activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span>
+          <h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2>
+          <p>{activeMembership.company.pro_trial_ends_at
+            ? `Pro je zdarma do ${dateLabel(activeMembership.company.pro_trial_ends_at)}. Potom sa firma automaticky vráti na Free; platba sa nestrhne.`
+            : activeMembership.company.plan !== "FREE"
+              ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.`
+              : activeMembership.company.pro_trial_started_at
+                ? "Skúšobná verzia sa skončila. Firma používa Free; platenú licenciu si môžete objednať nižšie."
+                : `Používate ${roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.role === "ACCOUNTANT" && member.is_employee)).length} z 2 zamestnaneckých miest.`}</p>
+        </div>
+        <div className="plan-card-price"><strong>{activeMembership.company.pro_trial_ends_at ? "Zdarma" : COMPANY_PLAN_LABELS[activeMembership.company.plan]}</strong><span>{activeMembership.company.pro_trial_ends_at ? "30-dňová skúška" : activeMembership.company.plan !== "FREE" ? "stav účtu" : "aktuálny účet"}</span></div>
+        {isCompanyOwner && activeMembership.active && activeMembership.company.plan === "FREE" && !activeMembership.company.pro_trial_started_at && <div className="form-actions"><button className="button button-primary" disabled={busy} onClick={() => void startProTrial()}>{busy ? "Aktivujem…" : "Vyskúšať Pro na 30 dní"}</button></div>}
+        <p className="plan-card-note">{activeMembership.company.pro_trial_ends_at
+          ? "Bez platobnej karty a bez automatického účtovania. Po skúške si môžete platený plán objednať samostatne."
+          : activeMembership.company.pro_trial_started_at
+            ? "Skúšobnú verziu možno využiť iba raz na jednu firmu."
+            : "Licenciu prideľuje správca Workena po potvrdení platby. Skúšobnú verziu Pro možno využiť raz na firmu."}</p>
       </section>}
       {isManager && <section className="pricing-proposal">
         <header className="pricing-proposal-heading">
@@ -3659,9 +3886,9 @@ export function App() {
           <div className="form-actions">
             <button className="button button-quiet" onClick={() => setPreviewPlan("")}>Zavrieť náhľad</button>
             <button className="button button-primary" disabled={busy} onClick={() => void createPaymentRequest(previewPlan)}>Požiadať o licenciu</button>
-            {isCompanyOwner && GOPAY_TEST_MODE && <button className="button button-outline" disabled={busy} onClick={() => void startGoPayTestPayment(previewPlan)}>Otvoriť GoPay sandbox test</button>}
+            {isCompanyOwner && GOPAY_TEST_MODE && <button className="button button-outline" disabled={busy} onClick={() => void startGoPayTestPayment(previewPlan)}>Testovať mesačné GoPay opakovanie</button>}
           </div>
-          {isCompanyOwner && <p className="payment-pending-note">GoPay sandbox je určený iba na testovanie integrácie. Testovacia transakcia nevytvorí ostrú objednávku a neaktivuje plán.</p>}
+          {isCompanyOwner && <p className="payment-pending-note">GoPay sandbox testuje opakovanú mesačnú platbu. Prvá testovacia platba prebehne hneď; v sandboxe sa nič nestrhne z reálnej karty, licencia sa neaktivuje a nevznikne produkčné predplatné.</p>}
         </section>}
         {selectedPaymentRequest && <section className="panel payment-instructions">
           <div className="payment-instructions-copy">
@@ -4010,10 +4237,11 @@ export function App() {
               </section>}
               {isEmployeeUser && (() => {
                 const myOrders = workOrders.filter((order) =>
-                  (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id)
-                  || order.assignee_id === session?.user.id);
+                  (order.assignees?.length
+                    ? order.assignees.some((assignment) => assignment.user_id === session?.user.id && !assignment.declined_at)
+                    : order.assignee_id === session?.user.id));
                 const activeOrders = myOrders
-                  .filter((order) => order.status !== "DONE")
+                  .filter((order) => order.status !== "DONE" && !(activeMembership?.is_salesperson && order.status === "MEASURED"))
                   .sort((a, b) => a.due_date.localeCompare(b.due_date)
                     || (a.starts_at ?? "99:99").localeCompare(b.starts_at ?? "99:99"));
                 const todayKey = localDateKey(new Date().toISOString());
@@ -4028,7 +4256,7 @@ export function App() {
                         <strong>{order.title}</strong>
                         <span className={overdue ? "work-order-overdue" : ""}>Termín {dateLabel(`${order.due_date}T12:00:00`)}{order.time_to_arrange ? " · čas treba dohodnúť" : order.starts_at ? ` · ${order.starts_at.slice(0, 5)} – ${order.ends_at?.slice(0, 5) ?? "—"}` : ""}{overdue ? " · po termíne" : ""}</span>
                         <span className={`status-pill work-order-status work-order-${order.status.toLowerCase()}`}>{workOrderStatusName(order.status)}</span>
-                        {assignment && !assignment.accepted_at && <span className="status-pill status-pending">Čaká na potvrdenie</span>}
+                        {assignment && !assignment.accepted_at && !assignment.declined_at && <span className="status-pill status-pending">Čaká na potvrdenie</span>}
                         <button className="button button-outline button-small" aria-expanded={expanded} onClick={() => setExpandedDashboardOrderId(expanded ? null : order.id)}>{expanded ? "Skryť podrobnosti" : "Zobraziť podrobnosti"}</button>
                         {expanded && <div className="dashboard-order-details">
                           <span><MapPin size={14} /> {order.address}</span>
@@ -4050,12 +4278,12 @@ export function App() {
                 <div className="stat-card"><span className="stat-label">{isManager ? "Členovia tímu" : "Moje záznamy tento mesiac"}</span><span className={`stat-icon ${isManager ? "stat-green" : "stat-purple"}`}>{isManager ? <Users size={17} /> : <ClipboardList size={17} />}</span><strong>{isManager ? roster.filter((member) => member.active).length : monthlyEntries.length}</strong><span className="stat-foot">{isManager ? "Aktívni členovia firmy" : "Zapísané pracovné dni"}</span></div>
               </section>
               {isManager && (() => {
-                const waiting = workOrders.flatMap((order) => (order.assignees ?? [])
-                  .filter((assignment) => !assignment.accepted_at)
+                const waiting = workOrders.flatMap((order) => (order.status === "DONE" ? [] : (order.assignees ?? [])
+                  .filter((assignment) => !assignment.accepted_at && !assignment.declined_at)
                   .map((assignment) => ({
                     order,
                     employee: roster.find((member) => member.user_id === assignment.user_id),
-                  })));
+                  }))));
                 return <section className="panel assignment-notice-panel">
                   <div className="panel-heading"><div><h2><Users size={17} /> Potvrdenie priradených zákaziek</h2><p>Prehľad zamestnancov, ktorí ešte nepotvrdili pridelenú prácu.</p></div><span className="count-pill">{waiting.length} čaká</span></div>
                   {waiting.length

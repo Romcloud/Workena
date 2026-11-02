@@ -23,6 +23,8 @@ export type Company = {
   id: string;
   name: string;
   plan: CompanyPlan;
+  pro_trial_started_at?: string | null;
+  pro_trial_ends_at?: string | null;
   selected_plan?: PaymentPlan | null;
   billing_name?: string | null;
   billing_ico?: string | null;
@@ -99,7 +101,7 @@ export type AttendanceBreak = {
   ended_at: string | null;
 };
 
-export type WorkOrderStatus = "ASSIGNED" | "IN_PROGRESS" | "DONE";
+export type WorkOrderStatus = "ASSIGNED" | "IN_PROGRESS" | "MEASURED" | "WORKING" | "DONE";
 
 export type WorkOrder = {
   id: string;
@@ -163,6 +165,8 @@ export type WorkOrderAssignment = {
   company_id: string;
   user_id: string;
   accepted_at: string | null;
+  declined_at?: string | null;
+  reassigned_at?: string | null;
   created_at: string;
 };
 
