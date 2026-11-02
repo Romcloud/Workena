@@ -12,7 +12,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
+type EmailTemplate = "company_welcome" | "company_join_request" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 type TemplateData = {
   companyName?: string;
@@ -25,6 +25,9 @@ type TemplateData = {
   startsAt?: string;
   endsAt?: string;
   reason?: string;
+  requestId?: string;
+  requesterName?: string;
+  requesterEmail?: string;
 };
 
 function json(status: number, body: Record<string, unknown>) {
@@ -47,9 +50,19 @@ function layout(title: string, bodyHtml: string) {
 </html>`;
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
 function renderEmail(template: EmailTemplate, data: TemplateData): { subject: string; html: string } {
-  const companyName = data.companyName ?? "vaša firma";
-  const fullName = data.fullName ?? "";
+  const companyName = escapeHtml(data.companyName ?? "vaša firma");
+  const fullName = escapeHtml(data.fullName ?? "");
   const greeting = fullName ? `Dobrý deň, ${fullName},` : "Dobrý deň,";
 
   switch (template) {
@@ -60,6 +73,15 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
           <p>${greeting}</p>
           <p>ďakujeme, že ste si vo Workena založili firemný priestor <strong>${companyName}</strong>. Môžete teraz pozývať kolegov, zadávať zákazky a sledovať dochádzku na jednom mieste.</p>
           <p>Ak budete potrebovať pomôcť, stačí odpovedať na tento email.</p>
+        `),
+      };
+    case "company_join_request":
+      return {
+        subject: `Žiadosť o vstup do firmy ${data.companyName ?? "vo Workena"}`,
+        html: layout("Žiadosť o vstup do firmy", `
+          <p>Dobrý deň,</p>
+          <p>Používateľ <strong>${escapeHtml(data.requesterName ?? "Používateľ")}</strong> (${escapeHtml(data.requesterEmail ?? "")}) požiadal o prístup do firmy <strong>${companyName}</strong>.</p>
+          <p>Žiadosť môžete prijať alebo odstrániť v časti Tím vo Workena.</p>
         `),
       };
     case "license_requested":
@@ -132,20 +154,51 @@ Deno.serve(async (req) => {
     const { data: userData, error: userError } = await userClient.auth.getUser();
     if (userError || !userData?.user) return json(401, { error: "Neplatné prihlásenie." });
 
-    const body = (await req.json()) as { template: EmailTemplate; to: string; data?: TemplateData };
-    if (!body.template || !body.to) return json(400, { error: "Chýba šablóna alebo príjemca." });
+    const body = (await req.json()) as { template: EmailTemplate; to?: string; data?: TemplateData };
+    if (!body.template) return json(400, { error: "Chýba šablóna emailu." });
 
     const adminOnlyTemplates: EmailTemplate[] = ["payment_confirmed", "payment_reminder", "admin_custom", "maintenance_notice"];
+    let recipients: string[];
+    let templateData = body.data ?? {};
     if (adminOnlyTemplates.includes(body.template)) {
       const { data: isAdmin } = await userClient.rpc("is_platform_admin");
       if (!isAdmin) return json(403, { error: "Prístup odmietnutý." });
-    } else if (body.to.toLowerCase() !== (userData.user.email ?? "").toLowerCase()) {
+      if (!body.to) return json(400, { error: "Chýba príjemca." });
+      recipients = [body.to];
+    } else if (body.template === "company_join_request") {
+      if (!body.data?.requestId) return json(400, { error: "Chýba identifikátor žiadosti." });
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!serviceRoleKey) return json(500, { error: "Serverová databázová služba nie je nakonfigurovaná." });
+      const adminClient = createClient(supabaseUrl, serviceRoleKey);
+      const { data: request, error: requestError } = await adminClient
+        .from("company_join_requests")
+        .select("company_id, email, full_name")
+        .eq("id", body.data.requestId)
+        .eq("user_id", userData.user.id)
+        .eq("status", "PENDING")
+        .maybeSingle();
+      if (requestError || !request) return json(403, { error: requestError?.message ?? "Žiadosť o vstup sa nenašla." });
+      const [{ data: company, error: companyError }, { data: managers, error: managersError }] = await Promise.all([
+        adminClient.from("companies").select("name").eq("id", request.company_id).maybeSingle(),
+        adminClient.from("memberships").select("email").eq("company_id", request.company_id).eq("active", true).in("role", ["OWNER", "MANAGER"]),
+      ]);
+      if (companyError || managersError) return json(500, { error: companyError?.message ?? managersError?.message ?? "Podrobnosti firmy sa nepodarilo načítať." });
+      recipients = (managers ?? []).map((manager) => manager.email).filter((email): email is string => Boolean(email));
+      if (!recipients.length) return json(400, { error: "Vedenie firmy nemá nastavenú e-mailovú adresu." });
+      templateData = {
+        companyName: company?.name,
+        requesterName: request.full_name ?? request.email,
+        requesterEmail: request.email,
+      };
+    } else if (!body.to || body.to.toLowerCase() !== (userData.user.email ?? "").toLowerCase()) {
       return json(403, { error: "Prístup odmietnutý." });
+    } else {
+      recipients = [body.to];
     }
 
     if (!RESEND_API_KEY) return json(500, { error: "Emailová služba nie je nakonfigurovaná." });
 
-    const { subject, html } = renderEmail(body.template, body.data ?? {});
+    const { subject, html } = renderEmail(body.template, templateData);
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -153,7 +206,7 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${RESEND_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [body.to], subject, html }),
+      body: JSON.stringify({ from: FROM_EMAIL, to: recipients, subject, html }),
     });
 
     if (!resendResponse.ok) {
