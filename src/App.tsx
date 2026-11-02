@@ -17,13 +17,17 @@ import {
   LayoutDashboard,
   LogOut,
   MapPin,
+  MessageCircle,
+  Navigation,
   Paperclip,
   Palmtree,
   Pencil,
+  Phone,
   Plane,
   Play,
   Plus,
   Printer,
+  Search,
   ShieldCheck,
   Square,
   Trash2,
@@ -34,11 +38,11 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyPlan, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
+import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyJoinRequest, CompanyPlan, CompanySearchResult, Customer, CustomerStatus, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
 
 type WorkspaceMembership = Membership & { company: Company };
-type Page = "dashboard" | "attendance" | "workOrders" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "admin";
+type Page = "dashboard" | "attendance" | "workOrders" | "customers" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "admin";
 type PhotoView = Photo & { url: string };
 
 const PHOTO_BUCKET = "work-photos";
@@ -86,7 +90,7 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Požiadavku sa nepodarilo dokončiť. Skúste to znova.";
 }
 
-type EmailTemplate = "company_welcome" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
+type EmailTemplate = "company_welcome" | "company_join_request" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 async function sendTransactionalEmail(
   client: typeof supabase,
@@ -163,6 +167,10 @@ function statusName(status: EntryStatus) {
 
 function workOrderStatusName(status: WorkOrderStatus) {
   return status === "DONE" ? "Hotové" : status === "IN_PROGRESS" ? "Rozpracované" : "Priradené";
+}
+
+function customerStatusName(status: CustomerStatus) {
+  return status === "APPROVED" ? "Schválená" : status === "REJECTED" ? "Zamietnutá" : "Bez odpovede";
 }
 
 const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
@@ -247,11 +255,16 @@ export function App() {
   const [authReady, setAuthReady] = useState(false);
   const [memberships, setMemberships] = useState<WorkspaceMembership[]>([]);
   const [companyId, setCompanyId] = useState("");
+  const [companyJoinMode, setCompanyJoinMode] = useState<"create" | "join">("create");
+  const [companySearchName, setCompanySearchName] = useState("");
+  const [companySearchResults, setCompanySearchResults] = useState<CompanySearchResult[]>([]);
+  const [joinRequests, setJoinRequests] = useState<CompanyJoinRequest[]>([]);
   const [entries, setEntries] = useState<WorkEntry[]>([]);
   const [roster, setRoster] = useState<Membership[]>([]);
   const [attendanceShifts, setAttendanceShifts] = useState<AttendanceShift[]>([]);
   const [attendanceBreaks, setAttendanceBreaks] = useState<AttendanceBreak[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [workOrderPhotos, setWorkOrderPhotos] = useState<WorkOrderPhotoView[]>([]);
   const [pendingWorkOrderPhotos, setPendingWorkOrderPhotos] = useState<WorkOrderPhotoFiles>({});
   const [vehicleTrips, setVehicleTrips] = useState<VehicleTrip[]>([]);
@@ -281,15 +294,34 @@ export function App() {
   const [reportEmployeeId, setReportEmployeeId] = useState("ALL");
   const [reportDataType, setReportDataType] = useState<"ALL" | "ATTENDANCE" | "TRIPS" | "WORK_ORDERS">("ALL");
   const [attendanceNow, setAttendanceNow] = useState(Date.now());
-  const [page, setPage] = useState<Page>(() => window.location.hash === "#obchodne-podmienky" ? "terms" : "dashboard");
+  const [page, setPage] = useState<Page>(() => {
+    if (window.location.hash === "#obchodne-podmienky") return "terms";
+    const savedPage = window.localStorage.getItem("workena-page");
+    const pages: Page[] = ["dashboard", "attendance", "workOrders", "customers", "trips", "reports", "team", "history", "profile", "terms", "admin"];
+    return pages.includes(savedPage as Page) ? savedPage as Page : "dashboard";
+  });
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerOwnerId, setCustomerOwnerId] = useState("ALL");
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([""]);
+  const [expandedDashboardOrderId, setExpandedDashboardOrderId] = useState<string | null>(null);
+  const [calendarExpanded, setCalendarExpanded] = useState(false);
+  const [selectedCalendarOrder, setSelectedCalendarOrder] = useState<WorkOrder | null>(null);
+  const [selectedCalendarAttendance, setSelectedCalendarAttendance] = useState<AttendanceShift | null>(null);
+  const [selectedCalendarAbsence, setSelectedCalendarAbsence] = useState<AbsenceRequest | null>(null);
+  const [calendarShifts, setCalendarShifts] = useState<AttendanceShift[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
+  const [showLunchBreakPrompt, setShowLunchBreakPrompt] = useState(false);
+  const [editingScheduleOrderId, setEditingScheduleOrderId] = useState<string | null>(null);
   const [profileFullName, setProfileFullName] = useState("");
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkEntry | null>(null);
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
   const [showEntryForm, setShowEntryForm] = useState(false);
   const [attendanceEmployeeFilter, setAttendanceEmployeeFilter] = useState("ALL");
+  const [newMemberType, setNewMemberType] = useState("EMPLOYEE");
   const [pendingAbsenceAttachment, setPendingAbsenceAttachment] = useState<File | null>(null);
   const [previewPlan, setPreviewPlan] = useState<PaymentPlan | "">("");
   const [newCompanyName, setNewCompanyName] = useState("");
@@ -314,6 +346,10 @@ export function App() {
   const adminCompaniesRequest = useRef(0);
 
   useEffect(() => {
+    window.localStorage.setItem("workena-page", page);
+  }, [page]);
+
+  useEffect(() => {
     const handleHashChange = () => {
       if (window.location.hash === "#obchodne-podmienky") setPage("terms");
       else setPage((current) => current === "terms" ? "dashboard" : current);
@@ -325,8 +361,26 @@ export function App() {
   const activeMembership = memberships.find((membership) => membership.company_id === companyId) ?? memberships[0];
   const activeCompanyId = activeMembership?.company_id ?? "";
   const isManager = activeMembership?.role === "OWNER" || activeMembership?.role === "MANAGER";
+  const isCompanyOwner = activeMembership?.role === "OWNER";
+  const isEmployeeUser = activeMembership?.role === "EMPLOYEE" || activeMembership?.is_employee === true;
+  const isExternalEmployee = Boolean(activeMembership?.is_external);
+  const attendanceBreakThresholdMs = activeMembership?.is_minor ? 4.5 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
+  const canAccessCustomers = isCompanyOwner || activeMembership?.is_salesperson === true;
   const canManageAttendance = isManager || activeMembership?.role === "ACCOUNTANT";
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? null;
+  const visibleCustomers = useMemo(() => {
+    const query = customerSearch.trim().toLocaleLowerCase("sk");
+    return customers.filter((customer) =>
+      (isCompanyOwner ? customerOwnerId === "ALL" || customer.salesperson_id === customerOwnerId : customer.salesperson_id === session?.user.id)
+      && (!query || [
+        customer.full_name,
+        customer.location,
+        customer.lead_source,
+        customer.product,
+        customer.contact_details,
+      ].some((value) => value.toLocaleLowerCase("sk").includes(query))),
+    );
+  }, [customerOwnerId, customerSearch, customers, isCompanyOwner, session?.user.id]);
   const selectedPaymentRequest = paymentRequests.find((request) => request.id === selectedPaymentRequestId) ?? null;
   const profileName =
     session?.user.user_metadata.full_name ??
@@ -334,6 +388,10 @@ export function App() {
     session?.user.email?.split("@")[0] ??
     "Používateľ";
   const client = supabase;
+
+  useEffect(() => {
+    if (activeCompanyId) window.localStorage.setItem("workena-company", activeCompanyId);
+  }, [activeCompanyId]);
 
   useEffect(() => {
     setProfileFullName(profileName);
@@ -395,7 +453,7 @@ export function App() {
     void (async () => {
       const { data: memberRows, error: memberError } = await client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
+        .select("id, company_id, user_id, email, full_name, role, is_employee, is_salesperson, is_external, is_minor, active, deactivated_at, created_at")
         .eq("user_id", session.user.id);
       if (!alive) return;
       if (memberError) {
@@ -423,9 +481,12 @@ export function App() {
         return company ? [{ ...membership, company }] : [];
       });
       setMemberships(workspaces);
+      const savedCompanyId = window.localStorage.getItem("workena-company");
       setCompanyId((current) =>
         workspaces.some((membership) => membership.company_id === current)
           ? current
+          : workspaces.some((membership) => membership.company_id === savedCompanyId)
+            ? savedCompanyId ?? ""
           : workspaces[0]?.company_id ?? "",
       );
     })();
@@ -434,6 +495,29 @@ export function App() {
       alive = false;
     };
   }, [client, session]);
+
+  useEffect(() => {
+    if (!client || !activeCompanyId || !isManager) {
+      setJoinRequests([]);
+      return;
+    }
+    let alive = true;
+    void client
+      .from("company_join_requests")
+      .select("id, company_id, user_id, email, full_name, status, created_at")
+      .eq("company_id", activeCompanyId)
+      .eq("status", "PENDING")
+      .order("created_at", { ascending: true })
+      .then(({ data, error: requestsError }) => {
+        if (!alive) return;
+        if (requestsError) {
+          setError(requestsError.message);
+          return;
+        }
+        setJoinRequests((data ?? []) as CompanyJoinRequest[]);
+      });
+    return () => { alive = false; };
+  }, [activeCompanyId, client, isManager]);
 
   const refreshWorkspace = useCallback(async () => {
     if (!client || !activeCompanyId) return;
@@ -445,7 +529,7 @@ export function App() {
         .order("worked_at", { ascending: false }),
       client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
+        .select("id, company_id, user_id, email, full_name, role, is_employee, is_salesperson, is_external, is_minor, active, deactivated_at, created_at")
         .eq("company_id", activeCompanyId)
         .order("created_at"),
     ]);
@@ -601,6 +685,18 @@ export function App() {
     setAbsenceRequests((data ?? []) as AbsenceRequest[]);
   }, [activeCompanyId, client]);
 
+  const refreshCustomers = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    const { data, error: customerError } = await client
+      .from("customers")
+      .select("*")
+      .eq("company_id", activeCompanyId)
+      .order("customer_date", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (customerError) throw customerError;
+    setCustomers((data ?? []) as Customer[]);
+  }, [activeCompanyId, client]);
+
   const refreshAdminCompanies = useCallback(async () => {
     if (!client || !isPlatformAdmin) {
       setAdminCompanies([]);
@@ -622,14 +718,14 @@ export function App() {
     const [{ data: monthRows, error: monthError }, { data: openRows, error: openError }] = await Promise.all([
       client
         .from("attendance_shifts")
-        .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id")
+        .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id, note")
         .eq("company_id", activeCompanyId)
         .lt("started_at", nextMonthStart.toISOString())
         .or(`ended_at.is.null,ended_at.gt.${monthStart.toISOString()}`)
         .order("started_at", { ascending: false }),
       client
         .from("attendance_shifts")
-        .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id")
+        .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id, note")
         .eq("company_id", activeCompanyId)
         .is("ended_at", null),
     ]);
@@ -705,6 +801,40 @@ export function App() {
   }, [refreshAbsenceRequests]);
 
   useEffect(() => {
+    if (!client || !activeCompanyId) {
+      setCalendarShifts([]);
+      return;
+    }
+    let alive = true;
+    const start = new Date(`${workOrderMonth}-01T00:00:00`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+    void client.from("attendance_shifts")
+      .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id, note")
+      .eq("company_id", activeCompanyId)
+      .gte("started_at", start.toISOString())
+      .lt("started_at", end.toISOString())
+      .order("started_at")
+      .then(({ data, error: shiftsError }) => {
+        if (!alive) return;
+        if (shiftsError) {
+          setError(shiftsError.message);
+          return;
+        }
+        setCalendarShifts((data ?? []) as AttendanceShift[]);
+      });
+    return () => { alive = false; };
+  }, [activeCompanyId, client, workOrderMonth]);
+
+  useEffect(() => {
+    if (!canAccessCustomers) {
+      setCustomers([]);
+      return;
+    }
+    void refreshCustomers().catch((reason: unknown) => setError(errorText(reason)));
+  }, [canAccessCustomers, refreshCustomers]);
+
+  useEffect(() => {
     if (!client || !session) {
       setIsPlatformAdmin(false);
       return;
@@ -767,18 +897,25 @@ export function App() {
     };
   }, [loadPhotos, selectedId]);
 
-  const signIn = async () => {
+  const signIn = async (selectAccount = false) => {
     if (!client) return;
     setBusy(true);
     setError("");
     const { error: signInError } = await client.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        ...(selectAccount ? { queryParams: { prompt: "select_account" } } : {}),
+      },
     });
     if (signInError) {
       setError(signInError.message);
       setBusy(false);
     }
+  };
+
+  const switchAccount = async () => {
+    await signIn(true);
   };
 
   const signOut = async () => {
@@ -787,18 +924,90 @@ export function App() {
     if (signOutError) setError(signOutError.message);
   };
 
+  const searchCompaniesForJoin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setCompanySearchResults([]);
+    const { data, error: searchError } = await client.rpc("search_companies_for_join", {
+      p_name: companySearchName.trim(),
+    });
+    if (searchError) setError(searchError.message);
+    else if (!data?.length) setNotice("Firmu s takýmto názvom sme nenašli.");
+    else {
+      setCompanySearchResults(data as CompanySearchResult[]);
+      setNotice("");
+    }
+    setBusy(false);
+  };
+
+  const requestCompanyJoin = async (company: CompanySearchResult) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { data: requestId, error: requestError } = await client.rpc("request_company_join", {
+        p_company_id: company.company_id,
+      });
+      if (requestError) throw requestError;
+      const { error: emailError } = await client.functions.invoke("send-email", {
+        body: { template: "company_join_request", to: "", data: { requestId } },
+      });
+      if (emailError) {
+        setNotice("Žiadosť bola zaevidovaná, ale e-mail vedeniu sa nepodarilo odoslať. Skúste to neskôr alebo kontaktujte firmu priamo.");
+        setError(emailError.message);
+      } else {
+        setNotice(`Žiadosť o vstup do firmy ${company.company_name} bola odoslaná vedeniu.`);
+      }
+      setCompanySearchResults([]);
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewCompanyJoinRequest = async (request: CompanyJoinRequest, approve: boolean) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { error: reviewError } = await client.rpc("review_company_join_request", {
+        p_request_id: request.id,
+        p_approve: approve,
+      });
+      if (reviewError) throw reviewError;
+      setJoinRequests((current) => current.filter((item) => item.id !== request.id));
+      setNotice(approve ? `${request.full_name || request.email} bol pridaný do firmy.` : "Žiadosť bola odstránená.");
+      if (approve) await refreshWorkspace();
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createCompany = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client) return;
     const form = new FormData(event.currentTarget);
     setBusy(true);
     setError("");
-    const { error: createError } = await client.rpc("create_company", { p_name: String(form.get("name") ?? "") });
+    const { error: createError } = await client.rpc("create_company", {
+      p_name: String(form.get("name") ?? ""),
+      p_billing_name: String(form.get("billing_name") ?? ""),
+      p_billing_ico: String(form.get("billing_ico") ?? ""),
+      p_billing_dic: String(form.get("billing_dic") ?? ""),
+      p_billing_ic_dph: String(form.get("billing_ic_dph") ?? ""),
+      p_billing_address: String(form.get("billing_address") ?? ""),
+    });
     if (createError) setError(createError.message);
     else {
       const { data: refreshed, error: refreshError } = await client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
+        .select("id, company_id, user_id, email, full_name, role, is_employee, is_salesperson, is_external, is_minor, active, deactivated_at, created_at")
         .eq("user_id", session?.user.id ?? "");
       if (refreshError) setError(refreshError.message);
       else {
@@ -832,6 +1041,10 @@ export function App() {
   const saveEntry = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client || !activeMembership || !session) return;
+    if (!isEmployeeUser) {
+      setError("Pracovné záznamy môže pridávať iba člen s právom zamestnanca.");
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const values = {
       company_id: activeMembership.company_id,
@@ -1065,16 +1278,28 @@ export function App() {
     if (!client || !activeCompanyId) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const memberType = String(form.get("member_type") ?? "EMPLOYEE");
+    const isExternal = memberType === "EXTERNAL_EMPLOYEE";
+    const isEmployee = memberType === "EMPLOYEE" || isExternal || memberType === "EMPLOYED_ACCOUNTANT";
+    const role = memberType === "EMPLOYEE" || isExternal
+      ? "EMPLOYEE"
+      : memberType === "MANAGER"
+        ? "MANAGER"
+        : "ACCOUNTANT";
     setBusy(true);
     setError("");
     const { error: addError } = await client.rpc("add_company_member", {
       p_company_id: activeCompanyId,
       p_email: String(form.get("email") ?? ""),
-      p_role: String(form.get("role") ?? "EMPLOYEE"),
+      p_role: role,
+      p_is_employee: isEmployee,
+      p_is_external: isExternal,
+      p_is_minor: isEmployee && !isExternal && form.get("is_minor") === "on",
     });
     if (addError) setError(addError.message);
     else {
       formElement.reset();
+      setNewMemberType("EMPLOYEE");
       await refreshWorkspace();
       setNotice("Člen bol pridaný do firemného priestoru.");
     }
@@ -1106,6 +1331,44 @@ export function App() {
     setBusy(false);
   };
 
+  const updateMemberPermissions = async (
+    membership: Membership,
+    permission: "is_employee" | "is_salesperson" | "is_external" | "is_minor",
+    enabled: boolean,
+  ) => {
+    if (!client) return;
+    const nextEmployee = permission === "is_employee" ? enabled : Boolean(membership.is_employee);
+    const nextSalesperson = permission === "is_salesperson" ? enabled : Boolean(membership.is_salesperson);
+    const nextExternal = permission === "is_external" ? enabled : Boolean(membership.is_external);
+    const nextMinor = permission === "is_minor"
+      ? enabled
+      : (permission === "is_external" && enabled) || (permission === "is_employee" && !enabled)
+        ? false
+        : Boolean(membership.is_minor);
+    setBusy(true);
+    setError("");
+    try {
+      const { error: permissionError } = await client.rpc("update_member_permissions", {
+        p_membership_id: membership.id,
+        p_is_employee: nextEmployee,
+        p_is_salesperson: nextSalesperson,
+        p_is_external: nextExternal,
+        p_is_minor: nextMinor,
+      });
+      if (permissionError) throw permissionError;
+      setRoster((current) => current.map((member) => member.id === membership.id
+        ? { ...member, is_employee: nextEmployee, is_salesperson: nextSalesperson, is_external: nextExternal, is_minor: nextMinor }
+        : member));
+      setMemberships((current) => current.map((member) => member.id === membership.id
+        ? { ...member, is_employee: nextEmployee, is_salesperson: nextSalesperson, is_external: nextExternal, is_minor: nextMinor }
+        : member));
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createWorkOrder = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client || !activeCompanyId) return;
@@ -1113,17 +1376,32 @@ export function App() {
     const form = new FormData(formElement);
     const selectedAssigneeIds = form.getAll("assignee_ids").map(String).filter(Boolean);
     const assigneeIds = isManager ? selectedAssigneeIds : session?.user.id ? [session.user.id] : [];
+    const timeToArrange = form.get("time_to_arrange") === "on";
+    const startsAt = timeToArrange ? "" : String(form.get("starts_at") ?? "");
+    const endsAt = timeToArrange ? "" : String(form.get("ends_at") ?? "");
+    if (assigneeIds.length === 0) {
+      setError("Vyberte aspoň jedného zamestnanca.");
+      return;
+    }
+    if (Boolean(startsAt) !== Boolean(endsAt) || (startsAt && endsAt && endsAt <= startsAt)) {
+      setError("Vyplňte začiatok aj koniec zákazky a skontrolujte časový interval.");
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const { error: createError } = await client.rpc("create_work_order_multi", {
+      const { error: createError } = await client.rpc("create_work_order_with_details", {
         p_company_id: activeCompanyId,
         p_assignee_ids: assigneeIds,
         p_title: String(form.get("title") ?? ""),
         p_address: String(form.get("address") ?? ""),
         p_due_date: String(form.get("due_date") ?? ""),
         p_description: String(form.get("description") ?? ""),
+        p_contact_phone: String(form.get("contact_phone") ?? ""),
+        p_starts_at: startsAt || null,
+        p_ends_at: endsAt || null,
+        p_time_to_arrange: timeToArrange,
       });
       if (createError) {
         setError(createError.message);
@@ -1131,6 +1409,7 @@ export function App() {
       }
       await refreshWorkOrders();
       formElement.reset();
+      setSelectedAssigneeIds([""]);
       setNotice(isManager
         ? "Zákazka bola priradená vybraným zamestnancom. Po prijatí sa zobrazí jej potvrdený stav."
         : "Zákazka bola pridaná do vášho kalendára.");
@@ -1153,6 +1432,184 @@ export function App() {
       if (acceptError) throw acceptError;
       await refreshWorkOrders();
       setNotice("Zákazku ste prijali.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client || !activeCompanyId || !canAccessCustomers) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const salespersonId = isCompanyOwner
+      ? String(form.get("salesperson_id") ?? "")
+      : session?.user.id ?? "";
+    const priceValue = String(form.get("estimated_price") ?? "").trim();
+    const payload = {
+      company_id: activeCompanyId,
+      salesperson_id: salespersonId,
+      customer_date: String(form.get("customer_date") ?? ""),
+      full_name: String(form.get("full_name") ?? "").trim(),
+      location: String(form.get("location") ?? "").trim(),
+      lead_source: String(form.get("lead_source") ?? "").trim(),
+      product: String(form.get("product") ?? "").trim(),
+      quote_sent_date: String(form.get("quote_sent_date") ?? "") || null,
+      contact_details: String(form.get("contact_details") ?? "").trim(),
+      estimated_price: priceValue ? Number(priceValue) : null,
+      status: String(form.get("status") ?? "NO_RESPONSE") as CustomerStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (isCompanyOwner && !roster.some((member) => member.user_id === salespersonId && member.is_salesperson)) {
+      setError("Vyberte aktívneho člena s právom obchodníka.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: customerError } = editingCustomer
+        ? await client.from("customers").update(payload).eq("id", editingCustomer.id).eq("company_id", activeCompanyId).select("id").single()
+        : await client.from("customers").insert(payload).select("id").single();
+      if (customerError) throw customerError;
+      await refreshCustomers();
+      setEditingCustomer(null);
+      setNotice(editingCustomer ? "Zákazník bol upravený." : "Zákazník bol pridaný.");
+      formElement.reset();
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeCustomerStatus = async (customer: Customer, status: CustomerStatus) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { error: statusError } = await client.from("customers").update({ status, updated_at: new Date().toISOString() }).eq("id", customer.id).select("id").single();
+      if (statusError) throw statusError;
+      await refreshCustomers();
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteCustomer = async (customer: Customer) => {
+    if (!client || !window.confirm(`Naozaj chcete vymazať zákazníka „${customer.full_name}“?`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { error: deleteError } = await client.from("customers").delete().eq("id", customer.id).select("id").single();
+      if (deleteError) throw deleteError;
+      await refreshCustomers();
+      setNotice("Zákazník bol vymazaný.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveWorkOrderDetails = async (event: FormEvent<HTMLFormElement>, order: WorkOrder) => {
+    event.preventDefault();
+    if (!client) return;
+    const form = new FormData(event.currentTarget);
+    const timeToArrange = form.get("time_to_arrange") === "on";
+    const startsAt = timeToArrange ? "" : String(form.get("starts_at") ?? "");
+    const endsAt = timeToArrange ? "" : String(form.get("ends_at") ?? "");
+    if (Boolean(startsAt) !== Boolean(endsAt) || (startsAt && endsAt && endsAt <= startsAt)) {
+      setError("Vyplňte začiatok aj koniec zákazky a skontrolujte časový interval.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error: saveError } = await client.rpc("update_work_order_details", {
+        p_work_order_id: order.id,
+        p_title: String(form.get("title") ?? ""),
+        p_address: String(form.get("address") ?? ""),
+        p_due_date: String(form.get("due_date") ?? ""),
+        p_description: String(form.get("description") ?? ""),
+        p_contact_phone: String(form.get("contact_phone") ?? ""),
+        p_starts_at: startsAt || null,
+        p_ends_at: endsAt || null,
+        p_time_to_arrange: timeToArrange,
+      });
+      if (saveError) throw saveError;
+      await refreshWorkOrders();
+      setEditingOrderId(null);
+      setNotice("Zákazka bola upravená.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const completeWorkOrder = async (order: WorkOrder) => {
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { error: completeError } = await client.rpc("complete_work_order", { p_work_order_id: order.id });
+      if (completeError) throw completeError;
+      await refreshWorkOrders();
+      setNotice("Zákazka bola označená ako dokončená.");
+      setSelectedCalendarOrder(null);
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveWorkOrderSchedule = async (event: FormEvent<HTMLFormElement>, order: WorkOrder) => {
+    event.preventDefault();
+    if (!client) return;
+    const form = new FormData(event.currentTarget);
+    const timeToArrange = form.get("time_to_arrange") === "on";
+    const startsAt = timeToArrange ? "" : String(form.get("starts_at") ?? "");
+    const endsAt = timeToArrange ? "" : String(form.get("ends_at") ?? "");
+    if (Boolean(startsAt) !== Boolean(endsAt) || (startsAt && endsAt && endsAt <= startsAt)) {
+      setError("Vyplňte začiatok aj koniec zákazky a skontrolujte časový interval.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error: scheduleError } = await client.rpc("update_work_order_schedule", {
+        p_work_order_id: order.id,
+        p_due_date: String(form.get("due_date") ?? ""),
+        p_starts_at: startsAt || null,
+        p_ends_at: endsAt || null,
+        p_time_to_arrange: timeToArrange,
+      });
+      if (scheduleError) throw scheduleError;
+      await refreshWorkOrders();
+      setEditingScheduleOrderId(null);
+      setNotice("Termín zákazky bol upravený.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteWorkOrder = async (order: WorkOrder) => {
+    if (!client || !window.confirm(`Naozaj chcete vymazať zákazku „${order.title}“?`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { error: deleteError } = await client.rpc("delete_work_order", { p_work_order_id: order.id });
+      if (deleteError) throw deleteError;
+      await refreshWorkOrders();
+      setNotice("Zákazka bola vymazaná.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -1515,15 +1972,24 @@ export function App() {
   const createAdditionalCompany = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client) return;
+    const form = new FormData(event.currentTarget);
+    const companyName = String(form.get("name") ?? "");
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const { error: createError } = await client.rpc("create_company", { p_name: newCompanyName });
+      const { error: createError } = await client.rpc("create_company", {
+        p_name: companyName,
+        p_billing_name: String(form.get("billing_name") ?? ""),
+        p_billing_ico: String(form.get("billing_ico") ?? ""),
+        p_billing_dic: String(form.get("billing_dic") ?? ""),
+        p_billing_ic_dph: String(form.get("billing_ic_dph") ?? ""),
+        p_billing_address: String(form.get("billing_address") ?? ""),
+      });
       if (createError) throw createError;
       const { data: refreshed, error: refreshError } = await client
         .from("memberships")
-        .select("id, company_id, user_id, email, full_name, role, active, deactivated_at, created_at")
+        .select("id, company_id, user_id, email, full_name, role, is_employee, is_salesperson, is_external, is_minor, active, deactivated_at, created_at")
         .eq("user_id", session?.user.id ?? "");
       if (refreshError) throw refreshError;
       const memberRows = (refreshed ?? []) as Membership[];
@@ -1542,7 +2008,7 @@ export function App() {
       setNotice("Nová firma bola založená.");
       if (session?.user.email) {
         void sendTransactionalEmail(client, "company_welcome", session.user.email, {
-          companyName: newCompanyName,
+          companyName,
           fullName: session.user.user_metadata?.full_name ?? "",
         });
       }
@@ -1710,7 +2176,7 @@ export function App() {
       totalsByUser.set(entry.user_id, total);
     }
     return roster
-      .filter((member) => member.role === "EMPLOYEE")
+      .filter((member) => member.role === "EMPLOYEE" || member.is_employee)
       .map((member) => {
         const total = totalsByUser.get(member.user_id) ?? { hours: 0, entries: 0 };
         return { member, hours: total.hours, entryCount: total.entries };
@@ -1735,7 +2201,7 @@ export function App() {
       totalsByUser.set(entry.user_id, total);
     }
     return roster
-      .filter((member) => member.role === "EMPLOYEE")
+      .filter((member) => member.role === "EMPLOYEE" || member.is_employee)
       .map((member) => {
         const total = totalsByUser.get(member.user_id) ?? { hours: 0, entries: 0 };
         return { member, hours: total.hours, entryCount: total.entries };
@@ -1766,7 +2232,7 @@ export function App() {
   );
   const attendanceSummary = useMemo(() => {
     const members = canManageAttendance
-      ? roster.filter((member) => member.role === "EMPLOYEE" && (attendanceEmployeeFilter === "ALL" || member.user_id === attendanceEmployeeFilter))
+      ? roster.filter((member) => (member.role === "EMPLOYEE" || member.is_employee) && (attendanceEmployeeFilter === "ALL" || member.user_id === attendanceEmployeeFilter))
       : roster.filter((member) => member.user_id === session?.user.id);
     const monthStartDate = new Date(`${attendanceMonth}-01T00:00:00`);
     const monthEndDate = new Date(monthStartDate);
@@ -1803,7 +2269,7 @@ export function App() {
     [attendanceMonth, workOrders],
   );
   const reportEmployeeSummary = useMemo(() => {
-    const members = roster.filter((member) => member.role === "EMPLOYEE");
+    const members = roster.filter((member) => member.role === "EMPLOYEE" || member.is_employee);
     return members
       .map((member) => {
         const shifts = attendanceShifts.filter(
@@ -1904,13 +2370,17 @@ export function App() {
 
   const attendanceAction = async (
     action: "start_attendance" | "start_attendance_break" | "end_attendance_break" | "end_attendance",
+    lunchBreakTaken: boolean | null = null,
   ) => {
     if (!client || !activeCompanyId) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const { error: actionError } = await client.rpc(action, { p_company_id: activeCompanyId });
+      const { error: actionError } = await client.rpc(action, {
+        p_company_id: activeCompanyId,
+        ...(action === "end_attendance" ? { p_lunch_break: lunchBreakTaken } : {}),
+      });
       if (actionError) {
         setError(actionError.message);
         return;
@@ -1927,6 +2397,17 @@ export function App() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const requestEndAttendance = () => {
+    if (!activeShift) return;
+    const recordedBreaks = attendanceBreaks.some((pause) => pause.shift_id === activeShift.id);
+    const elapsed = attendanceNow - new Date(activeShift.started_at).getTime();
+    if (isEmployeeUser && !isExternalEmployee && !recordedBreaks && elapsed >= attendanceBreakThresholdMs) {
+      setShowLunchBreakPrompt(true);
+      return;
+    }
+    void attendanceAction("end_attendance");
   };
 
   const calculateVehicleTripRoute = async () => {
@@ -2113,6 +2594,44 @@ export function App() {
     window.print();
   };
 
+  const downloadCustomersCsv = () => {
+    const rows = [
+      ["Dátum", "Meno", "Lokalita", "Odkiaľ prišiel dopyt", "Produkt", "CP poslaná dňa", "Kontaktné údaje", "Približná cena", "Stav", "Obchodník"],
+      ...visibleCustomers.map((customer) => [
+        customer.customer_date,
+        customer.full_name,
+        customer.location,
+        customer.lead_source,
+        customer.product,
+        customer.quote_sent_date ?? "",
+        customer.contact_details,
+        customer.estimated_price === null ? "" : Number(customer.estimated_price).toFixed(2),
+        customerStatusName(customer.status),
+        roster.find((member) => member.user_id === customer.salesperson_id)?.full_name
+          || roster.find((member) => member.user_id === customer.salesperson_id)?.email
+          || "",
+      ]),
+    ];
+    const blob = new Blob([`\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(activeMembership?.company.name ?? "workena").replace(/[^a-z0-9_-]+/gi, "-")}-zakaznici.csv`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const printCustomers = () => {
+    const previousTitle = document.title;
+    document.body.classList.add("printing-customer-report");
+    document.title = `${activeMembership?.company.name ?? "Workena"} - zákazníci`;
+    window.addEventListener("afterprint", () => {
+      document.body.classList.remove("printing-customer-report");
+      document.title = previousTitle;
+    }, { once: true });
+    window.print();
+  };
+
   if (page === "terms") {
     return <TermsOfService onBack={() => {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
@@ -2180,9 +2699,9 @@ export function App() {
     <section className="content-page">
       <header className="dashboard-title-row">
         <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
-        <button className="button button-outline" onClick={() => { setShowEntryForm((current) => !current); setEditingEntry(null); setPendingPhotos([]); }}>
+        {isEmployeeUser && <button className="button button-outline" onClick={() => { setShowEntryForm((current) => !current); setEditingEntry(null); setPendingPhotos([]); }}>
           <Plus size={15} /> {showEntryForm ? "Skryť formulár" : "Nový záznam"}
-        </button>
+        </button>}
       </header>
       {showEntryForm && <section className="panel form-panel form-stack entry-form">
         <header className="page-heading"><span className="heading-icon"><ClipboardList size={20} /></span><div><span className="eyebrow">{editingEntry ? "ÚPRAVA ZÁZNAMU" : "NOVÝ ZÁZNAM"}</span><h2>{editingEntry ? "Upraviť odpracovaný čas" : "Zapísať odpracovaný čas"}</h2><p>Údaje sú viditeľné iba členom firmy {activeMembership?.company.name}.</p></div></header>
@@ -2207,11 +2726,11 @@ export function App() {
         <label className="field"><span>Zobraziť dochádzku zamestnanca</span>
           <select value={attendanceEmployeeFilter} onChange={(event) => setAttendanceEmployeeFilter(event.target.value)}>
             <option value="ALL">Všetci zamestnanci</option>
-            {roster.filter((member) => member.role === "EMPLOYEE").map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}
+            {roster.filter((member) => member.role === "EMPLOYEE" || member.is_employee).map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}
           </select>
         </label>
       </section>}
-      <section className={`panel attendance-clock ${activeShift ? "attendance-clock-running" : ""}`}>
+      {isEmployeeUser && <section className={`panel attendance-clock ${activeShift ? "attendance-clock-running" : ""}`}>
         <div className="attendance-clock-copy">
           <span className="eyebrow">PRACOVNÁ ZMENA</span>
           <h2>{!activeShift ? "Zatiaľ nemáte spustenú zmenu" : activeBreak ? "Práve máte prestávku" : "Pracovná zmena prebieha"}</h2>
@@ -2228,10 +2747,10 @@ export function App() {
             ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
             : <div className="attendance-clock-actions">
               <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
-              <button className="button button-danger" disabled={busy} onClick={() => void attendanceAction("end_attendance")}><Square size={15} /> Ukončiť zmenu</button>
+              <button className="button button-danger" disabled={busy} onClick={requestEndAttendance}><Square size={15} /> Ukončiť zmenu</button>
             </div>}
-      </section>
-      <p className="attendance-schedule-note">Prihlásenie zamestnanca zmenu automaticky spustí alebo obnoví. Odhlásenie ani zatvorenie aplikácie časovač nezastaví; na zastavenie použite tlačidlo „Ukončiť zmenu“.</p>
+      </section>}
+      {isEmployeeUser && <p className="attendance-schedule-note">Prihlásenie zamestnanca zmenu automaticky spustí alebo obnoví. Odhlásenie ani zatvorenie aplikácie časovač nezastaví; na zastavenie použite tlačidlo „Ukončiť zmenu“.</p>}
       {notice && <p className="invite-success" role="status">{notice}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <section className="records-section attendance-history">
@@ -2286,6 +2805,7 @@ export function App() {
                         {shift.source_work_entry_id
                           ? <span className="status-pill status-approved">Zo záznamu práce</span>
                           : !shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
+                        {shift.note && <small className="attendance-shift-note">{shift.note}</small>}
                         {!shift.source_work_entry_id && (canManageAttendance || shift.user_id === session?.user.id) && <button
                           className="button button-outline button-small"
                           onClick={() => {
@@ -2382,8 +2902,68 @@ export function App() {
     </section>
   );
 
+  const renderCustomers = () => {
+    const salespeople = roster.filter((member) => member.active && member.is_salesperson);
+    return (
+      <section className="content-page">
+        <header className="dashboard-title-row">
+          <div><span className="eyebrow">OBCHODNÁ EVIDENCIA</span><h1>Zákazníci</h1><p>Každý obchodník spravuje svoju databázu zákazníkov.</p></div>
+          <div className="customer-export-actions">
+            <button className="button button-outline button-small" onClick={downloadCustomersCsv}><Download size={14} /> Excel (CSV)</button>
+            <button className="button button-outline button-small" onClick={printCustomers}><Printer size={14} /> Exportovať PDF</button>
+          </div>
+        </header>
+        <section className="panel customer-toolbar">
+          <label className="field customer-search"><span>Vyhľadávanie</span><span className="search-input"><Search size={16} /><input type="search" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Meno, lokalita, produkt alebo kontakt" /></span></label>
+          {isCompanyOwner && <label className="field"><span>Obchodník</span><select value={customerOwnerId} onChange={(event) => setCustomerOwnerId(event.target.value)}><option value="ALL">Všetci obchodníci</option>{salespeople.map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>}
+        </section>
+        <section className="panel form-panel form-stack">
+          <div className="panel-heading"><div><h2><Plus size={17} /> {editingCustomer ? "Upraviť zákazníka" : "Pridať zákazníka"}</h2><p>Kontaktné a obchodné údaje sú viditeľné iba pridelenému obchodníkovi a vedeniu.</p></div></div>
+          <form key={editingCustomer?.id ?? "new-customer"} className="form-stack" onSubmit={(event) => void saveCustomer(event)}>
+            <div className="form-grid">
+              <label className="field"><span>Dátum</span><input type="date" name="customer_date" defaultValue={editingCustomer?.customer_date ?? localDateKey(new Date())} required /></label>
+              <label className="field"><span>Meno</span><input name="full_name" defaultValue={editingCustomer?.full_name ?? ""} minLength={2} maxLength={160} required /></label>
+              <label className="field"><span>Lokalita</span><input name="location" defaultValue={editingCustomer?.location ?? ""} minLength={2} maxLength={250} required /></label>
+              <label className="field"><span>Odkiaľ prišiel dopyt</span><input name="lead_source" defaultValue={editingCustomer?.lead_source ?? ""} maxLength={160} placeholder="Odporúčanie, web, reklama…" required /></label>
+              <label className="field"><span>Produkt</span><input name="product" defaultValue={editingCustomer?.product ?? ""} maxLength={200} required /></label>
+              <label className="field"><span>CP poslaná dňa <small>voliteľné</small></span><input type="date" name="quote_sent_date" defaultValue={editingCustomer?.quote_sent_date ?? ""} /></label>
+              <label className="field"><span>Kontaktné údaje</span><input name="contact_details" defaultValue={editingCustomer?.contact_details ?? ""} maxLength={400} placeholder="Telefón, e-mail…" required /></label>
+              <label className="field"><span>Približná cena (€) <small>voliteľné</small></span><input type="number" name="estimated_price" min="0" step="0.01" defaultValue={editingCustomer?.estimated_price ?? ""} /></label>
+              <label className="field"><span>Stav</span><select name="status" defaultValue={editingCustomer?.status ?? "NO_RESPONSE"}><option value="APPROVED">Schválená</option><option value="REJECTED">Zamietnutá</option><option value="NO_RESPONSE">Bez odpovede</option></select></label>
+              {isCompanyOwner && <label className="field"><span>Obchodník</span><select name="salesperson_id" defaultValue={editingCustomer?.salesperson_id ?? (activeMembership?.is_salesperson ? session?.user.id : salespeople[0]?.user_id)} required>{salespeople.map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>}
+            </div>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            {notice && <p className="invite-success" role="status">{notice}</p>}
+            <div className="form-actions">
+              {editingCustomer && <button type="button" className="button button-quiet" onClick={() => setEditingCustomer(null)}>Zrušiť úpravu</button>}
+              <button className="button button-primary" disabled={busy || salespeople.length === 0}>{busy ? "Ukladám…" : editingCustomer ? "Uložiť zmeny" : "Pridať zákazníka"}</button>
+            </div>
+            {salespeople.length === 0 && <p className="muted">Najskôr v časti Tím udeľte aspoň jednému členovi právo Obchodník.</p>}
+          </form>
+        </section>
+        <section className="records-section">
+          <div className="section-title-row"><div><h2><Users size={17} /> Databáza zákazníkov</h2><p>{visibleCustomers.length} záznamov</p></div></div>
+          {visibleCustomers.length === 0
+            ? <div className="panel empty-state"><span className="soft-icon"><Users size={19} /></span><strong>Žiadni zákazníci</strong><p>Pridajte prvý záznam alebo upravte filter vyhľadávania.</p></div>
+            : <div className="panel customer-table-wrap"><table className="customer-table">
+              <thead><tr><th>Dátum</th><th>Meno</th><th>Lokalita</th><th>Dopyt</th><th>Produkt</th><th>CP poslaná</th><th>Kontakt</th><th>Približná cena</th><th>Stav</th>{isCompanyOwner && <th>Obchodník</th>}<th>Akcie</th></tr></thead>
+              <tbody>{visibleCustomers.map((customer) => {
+                const salesperson = roster.find((member) => member.user_id === customer.salesperson_id);
+                return <tr key={customer.id}>
+                  <td>{dateLabel(`${customer.customer_date}T12:00:00`)}</td><td><strong>{customer.full_name}</strong></td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ? dateLabel(`${customer.quote_sent_date}T12:00:00`) : "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "—" : `${hoursLabel(Number(customer.estimated_price))} €`}</td>
+                  <td><select aria-label={`Stav zákazníka ${customer.full_name}`} value={customer.status} disabled={busy} onChange={(event) => void changeCustomerStatus(customer, event.target.value as CustomerStatus)}><option value="APPROVED">Schválená</option><option value="REJECTED">Zamietnutá</option><option value="NO_RESPONSE">Bez odpovede</option></select><small className={`customer-status customer-status-${customer.status.toLowerCase()}`}>{customerStatusName(customer.status)}</small></td>
+                  {isCompanyOwner && <td>{salesperson?.full_name || salesperson?.email || "—"}</td>}
+                  <td><div className="customer-row-actions"><button className="button button-outline button-small" onClick={() => setEditingCustomer(customer)}><Pencil size={13} /> Upraviť</button><button className="button button-danger button-small" disabled={busy} onClick={() => void deleteCustomer(customer)}><Trash2 size={13} /> Vymazať</button></div></td>
+                </tr>;
+              })}</tbody>
+            </table></div>}
+        </section>
+      </section>
+    );
+  };
+
   const renderWorkOrders = () => {
-    const employees = roster.filter((member) => member.active && member.role === "EMPLOYEE");
+    const employees = roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.is_employee));
     const today = localDateKey(new Date().toISOString());
     const calendarMonthStart = new Date(`${workOrderMonth}-01T12:00:00`);
     const calendarOffset = (calendarMonthStart.getDay() + 6) % 7;
@@ -2407,9 +2987,25 @@ export function App() {
             : <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
               <div className="form-grid">
                 <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Elektroinštalácia rodinného domu" required /></label>
-                <label className="field"><span>Priradiť zamestnancom <small>vyberte jedného alebo viacerých</small></span><select name="assignee_ids" multiple size={Math.min(Math.max(employees.length, 2), 6)} required>{employees.map((employee) => <option key={employee.user_id} value={employee.user_id}>{employee.full_name || employee.email}</option>)}</select></label>
+                <div className="field">
+                  <span>Priradiť zamestnancom</span>
+                  <div className="assignee-picker">
+                    {selectedAssigneeIds.map((assigneeId, index) => <div className="assignee-picker-row" key={`assignee-${index}`}>
+                      <select name="assignee_ids" value={assigneeId} required onChange={(event) => setSelectedAssigneeIds((current) => current.map((id, row) => row === index ? event.target.value : id))}>
+                        <option value="">Vybrať zamestnanca</option>
+                        {employees.filter((employee) => !selectedAssigneeIds.includes(employee.user_id) || employee.user_id === assigneeId).map((employee) => <option key={employee.user_id} value={employee.user_id}>{employee.full_name || employee.email}</option>)}
+                      </select>
+                      {selectedAssigneeIds.length > 1 && <button type="button" className="button button-outline button-small" aria-label="Odobrať zamestnanca" onClick={() => setSelectedAssigneeIds((current) => current.filter((_, row) => row !== index))}><X size={14} /></button>}
+                    </div>)}
+                    {selectedAssigneeIds.length < employees.length && <button type="button" className="button button-outline button-small" onClick={() => setSelectedAssigneeIds((current) => [...current, ""])}><Plus size={14} /> Ďalší zamestnanec</button>}
+                  </div>
+                </div>
                 <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
                 <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
+                <label className="field"><span>Čas od <small>voliteľné</small></span><input type="time" name="starts_at" /></label>
+                <label className="field"><span>Čas do <small>voliteľné</small></span><input type="time" name="ends_at" /></label>
+                <label className="permission-toggle"><input type="checkbox" name="time_to_arrange" /> Čas treba dohodnúť</label>
+                <label className="field"><span>Telefón <small>voliteľné</small></span><input type="tel" name="contact_phone" maxLength={40} placeholder="+421 900 000 000" /></label>
               </div>
               <label className="field"><span>Opis práce</span><textarea name="description" rows={4} minLength={2} maxLength={4000} placeholder="Rozsah prác, dôležité pokyny a informácie…" required /></label>
               {error && <p className="form-error" role="alert">{error}</p>}
@@ -2424,6 +3020,10 @@ export function App() {
               <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Oprava kotla" required /></label>
               <label className="field"><span>Adresa zákazky</span><input name="address" minLength={2} maxLength={250} placeholder="Ulica, mesto" required /></label>
               <label className="field"><span>Termín</span><input type="date" name="due_date" required /></label>
+              <label className="field"><span>Čas od <small>voliteľné</small></span><input type="time" name="starts_at" /></label>
+              <label className="field"><span>Čas do <small>voliteľné</small></span><input type="time" name="ends_at" /></label>
+              <label className="permission-toggle"><input type="checkbox" name="time_to_arrange" /> Čas treba dohodnúť</label>
+              <label className="field"><span>Telefón <small>voliteľné</small></span><input type="tel" name="contact_phone" maxLength={40} placeholder="+421 900 000 000" /></label>
             </div>
             <label className="field"><span>Opis práce</span><textarea name="description" rows={4} minLength={2} maxLength={4000} placeholder="Rozsah prác, dôležité pokyny a informácie…" required /></label>
             {error && <p className="form-error" role="alert">{error}</p>}
@@ -2434,7 +3034,9 @@ export function App() {
         <section className="records-section">
           <div className="section-title-row">
             <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Termíny všetkých zákaziek v mesiaci.</p></div>
-            <div className="attendance-month-switch">
+            <div className="calendar-heading-actions">
+              <button className="button button-outline button-small" onClick={() => setCalendarExpanded((expanded) => !expanded)}>{calendarExpanded ? "Zmenšiť kalendár" : "Roztiahnuť kalendár"}</button>
+              <div className="attendance-month-switch">
               <button className="employee-hours-toggle" aria-label="Predchádzajúci mesiac" onClick={() => {
                 const previous = new Date(`${workOrderMonth}-01T12:00:00`);
                 previous.setMonth(previous.getMonth() - 1);
@@ -2446,12 +3048,14 @@ export function App() {
                 next.setMonth(next.getMonth() + 1);
                 setWorkOrderMonth(localDateKey(next).slice(0, 7));
               }}><ArrowRight size={16} /></button>
+              </div>
             </div>
           </div>
-          <div className="work-order-calendar" role="grid" aria-label="Kalendár zákaziek">
+          <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
               const dayOrders = day ? workOrders.filter((order) => order.due_date === day) : [];
+              const dayShifts = day ? calendarShifts.filter((shift) => localDateKey(shift.started_at) === day) : [];
               const dayAbsences = day
                 ? absenceRequests.filter((request) => (request.status === "PENDING" || request.status === "APPROVED") && absenceDatesOverlapDay(request, day))
                 : [];
@@ -2460,15 +3064,22 @@ export function App() {
                   className={`calendar-order calendar-order-${order.status.toLowerCase()}`}
                   key={order.id}
                   title={`${order.title} · ${workOrderStatusName(order.status)}`}
-                  onClick={() => document.getElementById(`work-order-${order.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                >{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}
+                  onClick={() => setSelectedCalendarOrder(order)}
+                >{order.time_to_arrange ? "Dohodnúť čas · " : order.starts_at ? `${order.starts_at.slice(0, 5)} · ` : ""}{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}
+                {dayShifts.slice(0, 2).map((shift) => {
+                  const member = roster.find((person) => person.user_id === shift.user_id);
+                  return <button className="calendar-attendance" key={shift.id} title={member?.full_name || member?.email || "Dochádzka"} onClick={() => setSelectedCalendarAttendance(shift)}>
+                    <Clock3 size={11} /> {timeLabel(shift.started_at)} · {member?.full_name || member?.email || "Dochádzka"}
+                  </button>;
+                })}
+                {dayShifts.length > 2 && <small>+{dayShifts.length - 2} dochádzky</small>}
                 {dayAbsences.slice(0, 2).map((request) => {
                   const member = roster.find((person) => person.user_id === request.user_id);
                   return <button
                     className={`calendar-absence calendar-absence-${request.type.toLowerCase()} ${request.status === "PENDING" ? "calendar-absence-pending" : ""}`}
                     key={request.id}
                     title={`${ABSENCE_TYPE_LABELS[request.type]} · ${member?.full_name || member?.email || "Zamestnanec"} · ${absenceStatusName(request.status)}`}
-                    onClick={() => document.getElementById(`absence-${request.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                    onClick={() => setSelectedCalendarAbsence(request)}
                   >{ABSENCE_TYPE_LABELS[request.type]}{request.status === "PENDING" ? " (čaká)" : ""}</button>;
                 })}{dayAbsences.length > 2 && <small>+{dayAbsences.length - 2} neprítomnosti</small>}</>}
               </div>;
@@ -2486,9 +3097,11 @@ export function App() {
                 member: roster.find((person) => person.user_id === assignment.user_id),
               }));
               const currentAssignment = assignments.find((assignment) => assignment.user_id === session?.user.id);
-              const canUpdate = !isManager && currentAssignment?.accepted_at !== null && currentAssignment !== undefined;
-              const needsAcceptance = !isManager && currentAssignment && !currentAssignment.accepted_at;
+              const canUpdate = currentAssignment?.accepted_at !== null && currentAssignment !== undefined;
+              const needsAcceptance = currentAssignment && !currentAssignment.accepted_at;
               const overdue = workOrder.status !== "DONE" && workOrder.due_date < today;
+              const canManageOrder = isManager || workOrder.created_by === session?.user.id;
+              const phoneDigits = workOrder.contact_phone?.replace(/\D/g, "") ?? "";
               return <article className="panel work-order-card" id={`work-order-${workOrder.id}`} key={workOrder.id}>
                 <div className="work-order-heading">
                   <div><span className="eyebrow">ZÁKAZKA</span><h2>{workOrder.title}</h2></div>
@@ -2497,11 +3110,50 @@ export function App() {
                 <div className="work-order-meta">
                   <span><MapPin size={14} />{workOrder.address}</span>
                   <span className={overdue ? "work-order-overdue" : ""}><Clock3 size={14} />Termín: {dateLabel(`${workOrder.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
+                  {workOrder.time_to_arrange
+                    ? <span><Clock3 size={14} />Čas treba dohodnúť</span>
+                    : (workOrder.starts_at || workOrder.ends_at) && <span><Clock3 size={14} />{workOrder.starts_at?.slice(0, 5) ?? "—"} – {workOrder.ends_at?.slice(0, 5) ?? "—"}</span>}
                   <span><Users size={14} />{assigneeMembers.length
                     ? assigneeMembers.map(({ assignment, member }) => `${member?.full_name || member?.email || "Bývalý zamestnanec"} · ${assignment.accepted_at ? "prijatá" : "čaká na prijatie"}`).join(", ")
                     : roster.find((member) => member.user_id === workOrder.assignee_id)?.full_name || roster.find((member) => member.user_id === workOrder.assignee_id)?.email || "Bývalý zamestnanec"}</span>
                 </div>
                 <p className="work-order-description">{workOrder.description}</p>
+                <div className="work-order-actions">
+                  <a className="button button-outline button-small" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(workOrder.address)}`} target="_blank" rel="noreferrer"><Navigation size={14} /> Navigovať</a>
+                  {workOrder.contact_phone && <>
+                    <a className="button button-outline button-small" href={`tel:${workOrder.contact_phone}`}><Phone size={14} /> Zavolať</a>
+                    <a className="button button-outline button-small" href={`sms:${workOrder.contact_phone}`}><MessageCircle size={14} /> SMS</a>
+                    <a className="button button-outline button-small" href={`https://wa.me/${phoneDigits}`} target="_blank" rel="noreferrer"><MessageCircle size={14} /> WhatsApp</a>
+                  </>}
+                  {canManageOrder && <button className="button button-outline button-small" onClick={() => setEditingOrderId((current) => current === workOrder.id ? null : workOrder.id)}><Pencil size={14} /> Upraviť</button>}
+                  {canUpdate && workOrder.status !== "DONE" && <button className="button button-outline button-small" onClick={() => setEditingScheduleOrderId((current) => current === workOrder.id ? null : workOrder.id)}><CalendarDays size={14} /> Upraviť termín</button>}
+                  {canManageOrder && workOrder.status !== "DONE" && <button className="button button-outline button-small" disabled={busy} onClick={() => void completeWorkOrder(workOrder)}><CheckCircle2 size={14} /> Dokončené</button>}
+                  {canManageOrder && <button className="button button-danger button-small" disabled={busy} onClick={() => void deleteWorkOrder(workOrder)}><Trash2 size={14} /> Vymazať</button>}
+                </div>
+                {editingOrderId === workOrder.id && <form className="work-order-edit-form form-stack" onSubmit={(event) => void saveWorkOrderDetails(event, workOrder)}>
+                  <div className="form-grid">
+                    <label className="field"><span>Názov zákazky</span><input name="title" defaultValue={workOrder.title} minLength={2} maxLength={140} required /></label>
+                    <label className="field"><span>Adresa zákazky</span><input name="address" defaultValue={workOrder.address} minLength={2} maxLength={250} required /></label>
+                    <label className="field"><span>Dátum</span><input type="date" name="due_date" defaultValue={workOrder.due_date} required /></label>
+                    <label className="field"><span>Telefón</span><input type="tel" name="contact_phone" defaultValue={workOrder.contact_phone ?? ""} maxLength={40} /></label>
+                    <label className="field"><span>Čas od</span><input type="time" name="starts_at" defaultValue={workOrder.starts_at?.slice(0, 5) ?? ""} /></label>
+                    <label className="field"><span>Čas do</span><input type="time" name="ends_at" defaultValue={workOrder.ends_at?.slice(0, 5) ?? ""} /></label>
+                  </div>
+                  <label className="permission-toggle"><input type="checkbox" name="time_to_arrange" defaultChecked={Boolean(workOrder.time_to_arrange)} /> Čas treba dohodnúť</label>
+                  <label className="field"><span>Opis</span><textarea name="description" rows={3} defaultValue={workOrder.description} minLength={2} maxLength={4000} required /></label>
+                  {error && <p className="form-error" role="alert">{error}</p>}
+                  <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setEditingOrderId(null)}>Zrušiť</button><button className="button button-primary button-small" disabled={busy}>{busy ? "Ukladám…" : "Uložiť zmeny"}</button></div>
+                </form>}
+                {editingScheduleOrderId === workOrder.id && <form className="work-order-edit-form form-stack" onSubmit={(event) => void saveWorkOrderSchedule(event, workOrder)}>
+                  <div className="form-grid">
+                    <label className="field"><span>Termín</span><input type="date" name="due_date" defaultValue={workOrder.due_date} required /></label>
+                    <label className="field"><span>Čas od <small>voliteľné</small></span><input type="time" name="starts_at" defaultValue={workOrder.starts_at?.slice(0, 5) ?? ""} /></label>
+                    <label className="field"><span>Čas do <small>voliteľné</small></span><input type="time" name="ends_at" defaultValue={workOrder.ends_at?.slice(0, 5) ?? ""} /></label>
+                  </div>
+                  <label className="permission-toggle"><input type="checkbox" name="time_to_arrange" defaultChecked={Boolean(workOrder.time_to_arrange)} /> Čas treba dohodnúť</label>
+                  {error && <p className="form-error" role="alert">{error}</p>}
+                  <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setEditingScheduleOrderId(null)}>Zrušiť</button><button className="button button-primary button-small" disabled={busy}>{busy ? "Ukladám…" : "Uložiť termín"}</button></div>
+                </form>}
                 {needsAcceptance && <div className="work-order-accept-panel">
                   <span>Zákazka čaká na vaše potvrdenie.</span>
                   <button className="button button-primary button-small" disabled={busy} onClick={() => void acceptWorkOrder(workOrder.id)}>Prijať zákazku</button>
@@ -2554,6 +3206,56 @@ export function App() {
               </article>;
             })}</div>}
         </section>
+      {selectedCalendarOrder && <div className="modal-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setSelectedCalendarOrder(null);
+      }}>
+        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-order-title">
+          <div className="modal-heading"><div><span className="eyebrow">ZÁKAZKA</span><h2 id="calendar-order-title">{selectedCalendarOrder.title}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedCalendarOrder(null)}><X size={18} /></button></div>
+          <p><MapPin size={15} /> {selectedCalendarOrder.address}</p>
+          <p><CalendarDays size={15} /> {dateLabel(`${selectedCalendarOrder.due_date}T12:00:00`)}{selectedCalendarOrder.time_to_arrange ? " · čas treba dohodnúť" : selectedCalendarOrder.starts_at ? ` · ${selectedCalendarOrder.starts_at.slice(0, 5)} – ${selectedCalendarOrder.ends_at?.slice(0, 5) ?? "—"}` : ""}</p>
+          <p className="work-order-description">{selectedCalendarOrder.description}</p>
+          {selectedCalendarOrder.contact_phone && <p><Phone size={15} /> {selectedCalendarOrder.contact_phone}</p>}
+          <div className="work-order-actions">
+            <a className="button button-outline button-small" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedCalendarOrder.address)}`} target="_blank" rel="noreferrer"><Navigation size={14} /> Navigovať</a>
+            {selectedCalendarOrder.contact_phone && <a className="button button-outline button-small" href={`tel:${selectedCalendarOrder.contact_phone}`}><Phone size={14} /> Zavolať</a>}
+          </div>
+          <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarOrder(null)}>Zavrieť</button><button className="button button-primary button-small" onClick={() => {
+            const orderId = selectedCalendarOrder.id;
+            setSelectedCalendarOrder(null);
+            window.setTimeout(() => document.getElementById(`work-order-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+          }}>Otvoriť zákazku</button></div>
+        </section>
+      </div>}
+      {selectedCalendarAttendance && <div className="modal-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setSelectedCalendarAttendance(null);
+      }}>
+        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-attendance-title">
+          <div className="modal-heading"><div><span className="eyebrow">DOCHÁDZKA</span><h2 id="calendar-attendance-title">{roster.find((member) => member.user_id === selectedCalendarAttendance.user_id)?.full_name || "Pracovná zmena"}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedCalendarAttendance(null)}><X size={18} /></button></div>
+          <p><CalendarDays size={15} /> {dateLabel(selectedCalendarAttendance.started_at)}</p>
+          <p><Clock3 size={15} /> {timeLabel(selectedCalendarAttendance.started_at)} – {selectedCalendarAttendance.ended_at ? timeLabel(selectedCalendarAttendance.ended_at) : "Prebieha"}</p>
+          {selectedCalendarAttendance.note && <p>{selectedCalendarAttendance.note}</p>}
+          <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarAttendance(null)}>Zavrieť</button><button className="button button-primary button-small" onClick={() => {
+            setAttendanceMonth(workOrderMonth);
+            setSelectedCalendarAttendance(null);
+            setPage("attendance");
+          }}>Otvoriť dochádzku</button></div>
+        </section>
+      </div>}
+      {selectedCalendarAbsence && <div className="modal-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setSelectedCalendarAbsence(null);
+      }}>
+        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-absence-title">
+          <div className="modal-heading"><div><span className="eyebrow">NEPRÍTOMNOSŤ</span><h2 id="calendar-absence-title">{ABSENCE_TYPE_LABELS[selectedCalendarAbsence.type]}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedCalendarAbsence(null)}><X size={18} /></button></div>
+          <p><Users size={15} /> {roster.find((member) => member.user_id === selectedCalendarAbsence.user_id)?.full_name || "Zamestnanec"} · {absenceStatusName(selectedCalendarAbsence.status)}</p>
+          <p><CalendarDays size={15} /> {dateLabel(`${selectedCalendarAbsence.start_date}T12:00:00`)} – {dateLabel(`${selectedCalendarAbsence.end_date}T12:00:00`)}</p>
+          {selectedCalendarAbsence.note && <p>{selectedCalendarAbsence.note}</p>}
+          <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarAbsence(null)}>Zavrieť</button><button className="button button-primary button-small" onClick={() => {
+            setAttendanceMonth(selectedCalendarAbsence.start_date.slice(0, 7));
+            setSelectedCalendarAbsence(null);
+            setPage("attendance");
+          }}>Otvoriť dochádzku</button></div>
+        </section>
+      </div>}
       </section>
     );
   };
@@ -2577,7 +3279,7 @@ export function App() {
                 setTripDistance("");
                 setTripNotice("");
               }
-            }}><option value="">Bez zákazky</option>{workOrders.filter((order) => order.assignee_id === session?.user.id).map((order) => <option key={order.id} value={order.id}>{order.title}</option>)}</select></label>
+            }}><option value="">Bez zákazky</option>{workOrders.filter((order) => order.assignee_id === session?.user.id || (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id)).map((order) => <option key={order.id} value={order.id}>{order.title}</option>)}</select></label>
             <label className="field"><span>Miesto odchodu</span><input value={tripOrigin} onChange={(event) => {
               setTripOrigin(event.target.value);
               setTripMapDistance(null);
@@ -2688,7 +3390,7 @@ export function App() {
         </header>
         <section className="report-filter panel">
           <label className="field"><span>Obdobie reportu</span><input type="month" value={attendanceMonth} max={localDateKey(new Date().toISOString()).slice(0, 7)} onChange={(event) => setAttendanceMonth(event.target.value)} /></label>
-          <label className="field"><span>Zamestnanec</span><select value={reportEmployeeId} onChange={(event) => setReportEmployeeId(event.target.value)}><option value="ALL">Všetci zamestnanci</option>{roster.filter((member) => member.role === "EMPLOYEE").map((member) => <option key={member.id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>
+          <label className="field"><span>Zamestnanec</span><select value={reportEmployeeId} onChange={(event) => setReportEmployeeId(event.target.value)}><option value="ALL">Všetci zamestnanci</option>{roster.filter((member) => member.role === "EMPLOYEE" || member.is_employee).map((member) => <option key={member.id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>
           <label className="field"><span>Druh údajov</span><select value={reportDataType} onChange={(event) => {
             const value = event.target.value;
             if (value === "ALL" || value === "ATTENDANCE" || value === "TRIPS" || value === "WORK_ORDERS") setReportDataType(value);
@@ -2752,8 +3454,15 @@ export function App() {
         {notice && <p className="invite-success" role="status">{notice}</p>}
         <div className="form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : "Uložiť profil"}</button></div>
       </form>
+      <section className="panel form-panel account-actions">
+        <div><h2>Prihlasovací účet</h2><p>Aktuálne ste prihlásený ako {session?.user.email ?? "—"}.</p></div>
+        <div className="form-actions">
+          <button className="button button-outline" onClick={() => void switchAccount()} disabled={busy}>Prepnúť účet</button>
+          <button className="button button-danger" onClick={() => void signOut()} disabled={busy}><LogOut size={16} /> Odhlásiť sa</button>
+        </div>
+      </section>
       {isManager && activeMembership && <section className={`panel plan-card ${activeMembership.company.plan !== "FREE" ? "plan-card-pro" : ""}`}>
-        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span><h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2><p>{activeMembership.company.plan !== "FREE" ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.` : `Používate ${roster.filter((member) => member.active && member.role === "EMPLOYEE").length} z 2 zamestnaneckých miest.`}</p></div>
+        <div className="plan-card-copy"><span className="eyebrow">{activeMembership.company.plan !== "FREE" ? "AKTÍVNA LICENCIA" : "BEZPLATNÝ PLÁN"}</span><h2>Workena {COMPANY_PLAN_LABELS[activeMembership.company.plan]}</h2><p>{activeMembership.company.plan !== "FREE" ? `Firemný priestor používa licenciu ${COMPANY_PLAN_LABELS[activeMembership.company.plan]}.` : `Používate ${roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.role === "ACCOUNTANT" && member.is_employee)).length} z 2 zamestnaneckých miest.`}</p></div>
         <div className="plan-card-price"><strong>{COMPANY_PLAN_LABELS[activeMembership.company.plan]}</strong><span>{activeMembership.company.plan !== "FREE" ? "stav účtu" : "aktuálny účet"}</span></div>
         <p className="plan-card-note">Licenciu prideľuje správca Workena po potvrdení platby.</p>
       </section>}
@@ -2849,7 +3558,14 @@ export function App() {
       {activeMembership?.role === "OWNER" && <section className="panel form-panel form-stack">
         <div className="panel-heading"><div><h2><Plus size={17} /> Pridať ďalšiu firmu</h2><p>Maximálny počet firiem podľa balíka: Free a Basic {PLAN_COMPANY_LIMIT.FREE}, Pro {PLAN_COMPANY_LIMIT.PRO}, Team {PLAN_COMPANY_LIMIT.TEAM}. Aktuálny balík: {COMPANY_PLAN_LABELS[activeMembership.company.plan]} (max. {PLAN_EMPLOYEE_LIMIT[activeMembership.company.plan] ?? "neobmedzene"} zamestnancov). Na ďalšiu firmu nad rámec balíka Free bude potrebná zodpovedajúca licencia.</p></div></div>
         <form className="form-stack" onSubmit={(event) => void createAdditionalCompany(event)}>
-          <label className="field"><span>Názov novej firmy</span><input value={newCompanyName} onChange={(event) => setNewCompanyName(event.target.value)} minLength={2} maxLength={120} placeholder="napr. Workena s.r.o. — pobočka" required /></label>
+          <label className="field"><span>Názov novej firmy</span><input name="name" value={newCompanyName} onChange={(event) => setNewCompanyName(event.target.value)} minLength={2} maxLength={120} placeholder="napr. Workena s.r.o. — pobočka" required /></label>
+          <div className="form-grid">
+            <label className="field"><span>Fakturačný názov firmy</span><input name="billing_name" defaultValue={billingName} maxLength={200} required /></label>
+            <label className="field"><span>IČO</span><input name="billing_ico" defaultValue={billingIco} maxLength={20} required /></label>
+            <label className="field"><span>DIČ</span><input name="billing_dic" defaultValue={billingDic} maxLength={20} required /></label>
+            <label className="field"><span>IČ DPH <small>voliteľné</small></span><input name="billing_ic_dph" defaultValue={billingIcDph} maxLength={20} /></label>
+          </div>
+          <label className="field"><span>Fakturačná adresa</span><textarea name="billing_address" rows={2} defaultValue={billingAddress} maxLength={400} required /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           {notice && <p className="invite-success" role="status">{notice}</p>}
           <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Zakladám…" : "Založiť firmu"}</button></div>
@@ -2916,16 +3632,29 @@ export function App() {
     </section>
   );
 
+  const renderCompanyJoinRequests = () => isManager && joinRequests.length > 0 && (
+    <section className="panel invite-panel">
+      <div className="panel-heading"><div><h2><Users size={17} /> Žiadosti o vstup</h2><p>Nové žiadosti o pripojenie do firmy.</p></div><span className="count-pill">{joinRequests.length} čaká</span></div>
+      <div className="member-list">{joinRequests.map((request) => <div className="member-row" key={request.id}>
+        <span className="avatar">{initials(request.full_name || request.email)}</span>
+        <span className="member-name"><strong>{request.full_name || request.email}</strong><small>{request.email}</small></span>
+        <button className="button button-primary button-small" disabled={busy} onClick={() => void reviewCompanyJoinRequest(request, true)}>Prijať</button>
+        <button className="button button-danger button-small" disabled={busy} onClick={() => void reviewCompanyJoinRequest(request, false)}>Odstrániť</button>
+      </div>)}</div>
+    </section>
+  );
+
   const renderTeam = () => (
     <section className="content-page">
       <header className="dashboard-title-row"><div><span className="eyebrow">FIREMNÝ PRIESTOR</span><h1>Tím</h1><p>Správa členov a ich prístupu k údajom firmy.</p></div></header>
       <div className="team-layout">
+        {renderCompanyJoinRequests()}
         <section className="panel team-panel">
           <div className="panel-heading"><div><h2><Users size={17} /> Členovia tímu</h2><p>Prístup majú iba aktívni členovia firmy.</p></div><span className="count-pill">{roster.filter((member) => member.active).length} členov</span></div>
           <div className="member-list">{roster.filter((member) => member.active).map((member) => <div className="member-row" key={member.id}>
             <span className="avatar">{initials(member.full_name || member.email)}</span>
             <span className="member-name"><strong>{member.full_name || member.email}</strong><small>{member.email}</small></span>
-            <span className={`status-pill role-${member.role.toLowerCase()}`}>{roleName(member.role)}</span>
+            <span className={`status-pill role-${member.role.toLowerCase()}`}>{member.role === "ACCOUNTANT" ? `Účtovník ${member.is_employee ? "zamestnaný" : "externý"}` : member.role === "EMPLOYEE" && member.is_external ? "Zamestnanec externý" : roleName(member.role)}</span>
             {member.role !== "OWNER" && (activeMembership?.role === "OWNER" || member.role === "EMPLOYEE") && <button className="logout-button" aria-label={`Odstrániť ${member.email}`} onClick={() => void removeMember(member)} disabled={busy}><X size={16} /></button>}
           </div>)}</div>
         </section>
@@ -2933,20 +3662,31 @@ export function App() {
           <div className="panel-heading"><div><h2><Plus size={17} /> Pridať člena</h2><p>Člen musí mať aspoň raz vytvorený účet cez Google.</p></div></div>
           <form className="invite-form" onSubmit={(event) => void addMember(event)}>
             <label className="field"><span>E-mail Google účtu</span><input type="email" name="email" autoComplete="email" placeholder="meno@firma.sk" required /></label>
-            <label className="field"><span>Rola</span><select name="role" defaultValue="EMPLOYEE"><option value="EMPLOYEE">Zamestnanec</option><option value="ACCOUNTANT">Účtovník</option>{activeMembership?.role === "OWNER" && <option value="MANAGER">Vedúci</option>}</select></label>
+            <label className="field"><span>Typ člena</span><select name="member_type" value={newMemberType} onChange={(event) => setNewMemberType(event.target.value)}>
+              <option value="EMPLOYEE">Zamestnanec</option>
+              <option value="EXTERNAL_EMPLOYEE">Zamestnanec externý</option>
+              <option value="EMPLOYED_ACCOUNTANT">Účtovník zamestnaný</option>
+              <option value="EXTERNAL_ACCOUNTANT">Účtovník externý</option>
+              {activeMembership?.role === "OWNER" && <option value="MANAGER">Vedúci</option>}
+            </select></label>
+            {["EMPLOYEE", "EMPLOYED_ACCOUNTANT"].includes(newMemberType) && <label className="permission-toggle"><input type="checkbox" name="is_minor" /> Mladistvý (prestávka po 4,5 h)</label>}
             <button className="button button-primary" disabled={busy}>Pridať do tímu</button>
           </form>
         </section>}
       </div>
       {isManager && <section className="panel form-panel form-stack">
-        <div className="panel-heading"><div><h2><ShieldCheck size={17} /> Práva členov tímu</h2><p>Zamestnancovi môžete udeliť práva účtovníka — uvidí dochádzku celej firmy, bude ju môcť upravovať a bude mať prístup k exportom a reportom.</p></div></div>
-        <div className="member-list">{roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.role === "ACCOUNTANT")).map((member) => <div className="member-row" key={member.id}>
+        <div className="panel-heading"><div><h2><ShieldCheck size={17} /> Práva členov tímu</h2><p>Účtovník môže byť zároveň zamestnancom; externý zamestnanec sa eviduje bez automatického odpočítania prestávky.</p></div></div>
+        <div className="member-list">{roster.filter((member) => member.active && (member.role === "EMPLOYEE" || member.role === "ACCOUNTANT" || member.role === "MANAGER" || member.role === "OWNER" && member.user_id === session?.user.id)).map((member) => <div className="member-row permissions-member-row" key={member.id}>
           <span className="avatar">{initials(member.full_name || member.email)}</span>
           <span className="member-name"><strong>{member.full_name || member.email}</strong><small>{member.email}</small></span>
-          <select value={member.role} disabled={busy} onChange={(event) => void updateMemberRole(member, event.target.value as Role)}>
-            <option value="EMPLOYEE">Zamestnanec</option>
-            <option value="ACCOUNTANT">Účtovník</option>
-          </select>
+          {(member.role === "EMPLOYEE" || member.role === "ACCOUNTANT") && <select value={member.role} disabled={busy} onChange={(event) => void updateMemberRole(member, event.target.value as Role)}>
+              <option value="EMPLOYEE">Zamestnanec</option>
+              <option value="ACCOUNTANT">Účtovník</option>
+            </select>}
+          <label className="permission-toggle"><input type="checkbox" checked={member.role === "EMPLOYEE" || Boolean(member.is_employee)} disabled={busy || member.role === "EMPLOYEE"} onChange={(event) => void updateMemberPermissions(member, "is_employee", event.target.checked)} /> Zamestnanec</label>
+          {member.role === "EMPLOYEE" && <label className="permission-toggle"><input type="checkbox" checked={Boolean(member.is_external)} disabled={busy} onChange={(event) => void updateMemberPermissions(member, "is_external", event.target.checked)} /> Externý (bez odpočítania prestávky)</label>}
+          {(member.role === "EMPLOYEE" || member.is_employee) && <label className="permission-toggle"><input type="checkbox" checked={Boolean(member.is_minor)} disabled={busy || Boolean(member.is_external)} onChange={(event) => void updateMemberPermissions(member, "is_minor", event.target.checked)} /> Mladistvý (prestávka po 4,5 h)</label>}
+          <label className="permission-toggle"><input type="checkbox" checked={Boolean(member.is_salesperson)} disabled={busy} onChange={(event) => void updateMemberPermissions(member, "is_salesperson", event.target.checked)} /> Obchodník</label>
         </div>)}</div>
       </section>}
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -3018,6 +3758,7 @@ export function App() {
           <button className={`nav-link ${page === "dashboard" ? "active" : ""}`} onClick={() => { setPage("dashboard"); setSelectedId(null); }}><LayoutDashboard size={18} /> Prehľad</button>
           <button className={`nav-link ${page === "attendance" ? "active" : ""}`} onClick={() => { setPage("attendance"); setError(""); }}><Clock3 size={18} /> Dochádzka</button>
           <button className={`nav-link ${page === "workOrders" ? "active" : ""}`} onClick={() => { setPage("workOrders"); setError(""); setNotice(""); }}><ClipboardList size={18} /> Zákazky</button>
+          {canAccessCustomers && <button className={`nav-link ${page === "customers" ? "active" : ""}`} onClick={() => { setPage("customers"); setError(""); setNotice(""); }}><Users size={18} /> Zákazníci</button>}
           <button className={`nav-link ${page === "trips" ? "active" : ""}`} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}><MapPin size={18} /> Výkaz jázd</button>
           {canManageAttendance && <button className={`nav-link ${page === "reports" ? "active" : ""}`} onClick={() => { setPage("reports"); setError(""); }}><Download size={18} /> Exporty a reporty</button>}
           {isManager && <button className={`nav-link ${page === "team" ? "active" : ""}`} onClick={() => setPage("team")}><Users size={18} /> Tím</button>}
@@ -3032,17 +3773,43 @@ export function App() {
         </div>
       </aside>
       <div className="main-area">
-        <header className="mobile-top"><Brand /><span className="mobile-company">{activeMembership?.company.name}</span><a className="mobile-terms" href="#obchodne-podmienky">Podmienky</a><button className="logout-button" aria-label="Odhlásiť sa" onClick={() => void signOut()}><LogOut size={17} /></button></header>
+        <header className="mobile-top"><Brand />{memberships.length > 1
+          ? <select className="mobile-company-select" aria-label="Vybrať firmu" value={activeCompanyId} onChange={(event) => { setCompanyId(event.target.value); setSelectedId(null); }}>
+            {memberships.map((membership) => <option key={membership.company_id} value={membership.company_id}>{membership.company.name}</option>)}
+          </select>
+          : <span className="mobile-company">{activeMembership?.company.name}</span>}
+          <a className="mobile-terms" href="#obchodne-podmienky">Podmienky</a><button className="logout-button" aria-label="Odhlásiť sa" onClick={() => void signOut()}><LogOut size={17} /></button></header>
         <main className="page-content">
           {!activeMembership && !isPlatformAdmin ? (
             <section className="center-card company-create">
-              <span className="eyebrow">VITAJTE VO WORKENE</span><h1>Založte firemný priestor</h1>
-              <p className="muted">Váš účet zatiaľ nie je členom firmy. Založte firmu a stanete sa jej vlastníkom.</p>
-              <form className="form-stack" onSubmit={(event) => void createCompany(event)}>
+              <span className="eyebrow">VITAJTE VO WORKENE</span><h1>Začnite používať Workenu</h1>
+              <p className="muted">Založte vlastnú firmu alebo požiadajte o prístup do existujúcej.</p>
+              <div className="company-entry-tabs" role="tablist" aria-label="Možnosti vstupu do firmy">
+                <button type="button" className={`button ${companyJoinMode === "create" ? "button-primary" : "button-outline"}`} role="tab" aria-selected={companyJoinMode === "create"} onClick={() => { setCompanyJoinMode("create"); setError(""); setNotice(""); }}>Založiť firmu</button>
+                <button type="button" className={`button ${companyJoinMode === "join" ? "button-primary" : "button-outline"}`} role="tab" aria-selected={companyJoinMode === "join"} onClick={() => { setCompanyJoinMode("join"); setError(""); setNotice(""); }}>Pridať sa k firme</button>
+              </div>
+              {companyJoinMode === "create" ? <form className="form-stack" onSubmit={(event) => void createCompany(event)}>
                 <label className="field"><span>Názov firmy</span><input name="name" minLength={2} maxLength={120} placeholder="napr. Workena s.r.o." required /></label>
+                <div className="form-grid">
+                  <label className="field"><span>Fakturačný názov firmy</span><input name="billing_name" maxLength={200} required /></label>
+                  <label className="field"><span>IČO</span><input name="billing_ico" maxLength={20} required /></label>
+                  <label className="field"><span>DIČ</span><input name="billing_dic" maxLength={20} required /></label>
+                  <label className="field"><span>IČ DPH <small>voliteľné</small></span><input name="billing_ic_dph" maxLength={20} /></label>
+                </div>
+                <label className="field"><span>Fakturačná adresa</span><textarea name="billing_address" rows={2} maxLength={400} required /></label>
                 {error && <p className="form-error" role="alert">{error}</p>}
                 <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
-              </form>
+              </form> : <div className="form-stack">
+                <form className="company-search-form" onSubmit={(event) => void searchCompaniesForJoin(event)}>
+                  <label className="field"><span>Názov firmy</span><input value={companySearchName} onChange={(event) => setCompanySearchName(event.target.value)} minLength={2} maxLength={120} placeholder="Zadajte názov firmy" required /></label>
+                  <button className="button button-outline" disabled={busy}><Search size={16} /> Vyhľadať firmu</button>
+                </form>
+                {companySearchResults.length > 0 && <div className="company-search-results">{companySearchResults.map((company) => <div className="company-search-result" key={company.company_id}>
+                  <strong>{company.company_name}</strong><button className="button button-primary button-small" disabled={busy} onClick={() => void requestCompanyJoin(company)}>Požiadať o prístup</button>
+                </div>)}</div>}
+                {notice && <p className="invite-success" role="status">{notice}</p>}
+                {error && <p className="form-error" role="alert">{error}</p>}
+              </div>}
             </section>
           ) : page === "admin" && isPlatformAdmin ? renderAdmin() : !activeMembership ? (
             <section className="center-card company-create">
@@ -3050,14 +3817,22 @@ export function App() {
               <p className="muted">Váš účet zatiaľ nie je členom firmy. Založte firmu a stanete sa jej vlastníkom, alebo prejdite do Administrácie.</p>
               <form className="form-stack" onSubmit={(event) => void createCompany(event)}>
                 <label className="field"><span>Názov firmy</span><input name="name" minLength={2} maxLength={120} placeholder="napr. Workena s.r.o." required /></label>
+                <div className="form-grid">
+                  <label className="field"><span>Fakturačný názov firmy</span><input name="billing_name" maxLength={200} required /></label>
+                  <label className="field"><span>IČO</span><input name="billing_ico" maxLength={20} required /></label>
+                  <label className="field"><span>DIČ</span><input name="billing_dic" maxLength={20} required /></label>
+                  <label className="field"><span>IČ DPH <small>voliteľné</small></span><input name="billing_ic_dph" maxLength={20} /></label>
+                </div>
+                <label className="field"><span>Fakturačná adresa</span><textarea name="billing_address" rows={2} maxLength={400} required /></label>
                 {error && <p className="form-error" role="alert">{error}</p>}
                 <button className="button button-primary" disabled={busy}>{busy ? "Vytváram…" : "Vytvoriť firmu"}</button>
               </form>
             </section>
-          ) : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "trips" ? renderTrips() : page === "reports" && canManageAttendance ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
+          ) : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "customers" && canAccessCustomers ? renderCustomers() : page === "trips" ? renderTrips() : page === "reports" && canManageAttendance ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
             <div className="content-page">
-              <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div><button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}><Plus size={16} /> Nový záznam</button></header>
-              <section className={`panel attendance-clock attendance-clock-compact ${activeShift ? "attendance-clock-running" : ""}`}>
+              <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div>{isEmployeeUser && <button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}><Plus size={16} /> Nový záznam</button>}</header>
+              {renderCompanyJoinRequests()}
+              {isEmployeeUser && <section className={`panel attendance-clock attendance-clock-compact ${activeShift ? "attendance-clock-running" : ""}`}>
                 <div className="attendance-clock-copy">
                   <span className="eyebrow">PRACOVNÁ ZMENA</span>
                   <h2>{!activeShift ? "Zatiaľ nemáte spustenú zmenu" : activeBreak ? "Práve máte prestávku" : "Pracovná zmena prebieha"}</h2>
@@ -3074,16 +3849,17 @@ export function App() {
                     ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
                     : <div className="attendance-clock-actions">
                       <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
-                      <button className="button button-danger" disabled={busy} onClick={() => void attendanceAction("end_attendance")}><Square size={15} /> Ukončiť prácu</button>
+                      <button className="button button-danger" disabled={busy} onClick={requestEndAttendance}><Square size={15} /> Ukončiť prácu</button>
                     </div>}
-              </section>
-              {!isManager && (() => {
+              </section>}
+              {isEmployeeUser && (() => {
                 const myOrders = workOrders.filter((order) =>
                   (order.assignees ?? []).some((assignment) => assignment.user_id === session?.user.id)
                   || order.assignee_id === session?.user.id);
                 const activeOrders = myOrders
                   .filter((order) => order.status !== "DONE")
-                  .sort((a, b) => a.due_date.localeCompare(b.due_date));
+                  .sort((a, b) => a.due_date.localeCompare(b.due_date)
+                    || (a.starts_at ?? "99:99").localeCompare(b.starts_at ?? "99:99"));
                 const todayKey = localDateKey(new Date().toISOString());
                 return <section className="panel assignment-notice-panel">
                   <div className="panel-heading"><div><h2><ClipboardList size={17} /> Moje pridelené zákazky</h2><p>Zákazky priradené vám, ktoré ešte nie sú dokončené.</p></div><span className="count-pill">{activeOrders.length} aktívnych</span></div>
@@ -3091,12 +3867,22 @@ export function App() {
                     ? <ul>{activeOrders.map((order) => {
                       const assignment = (order.assignees ?? []).find((item) => item.user_id === session?.user.id);
                       const overdue = order.status !== "DONE" && order.due_date < todayKey;
+                      const expanded = expandedDashboardOrderId === order.id;
                       return <li key={order.id}>
                         <strong>{order.title}</strong>
-                        <span className={overdue ? "work-order-overdue" : ""}>{order.address} · termín {dateLabel(`${order.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
+                        <span className={overdue ? "work-order-overdue" : ""}>Termín {dateLabel(`${order.due_date}T12:00:00`)}{order.time_to_arrange ? " · čas treba dohodnúť" : order.starts_at ? ` · ${order.starts_at.slice(0, 5)} – ${order.ends_at?.slice(0, 5) ?? "—"}` : ""}{overdue ? " · po termíne" : ""}</span>
                         <span className={`status-pill work-order-status work-order-${order.status.toLowerCase()}`}>{workOrderStatusName(order.status)}</span>
                         {assignment && !assignment.accepted_at && <span className="status-pill status-pending">Čaká na potvrdenie</span>}
-                        <button className="button button-outline button-small" onClick={() => setPage("workOrders")}>Zobraziť</button>
+                        <button className="button button-outline button-small" aria-expanded={expanded} onClick={() => setExpandedDashboardOrderId(expanded ? null : order.id)}>{expanded ? "Skryť podrobnosti" : "Zobraziť podrobnosti"}</button>
+                        {expanded && <div className="dashboard-order-details">
+                          <span><MapPin size={14} /> {order.address}</span>
+                          <p>{order.description}</p>
+                          <div className="work-order-actions">
+                            <a className="button button-outline button-small" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address)}`} target="_blank" rel="noreferrer"><Navigation size={14} /> Navigovať</a>
+                            {order.contact_phone && <a className="button button-outline button-small" href={`tel:${order.contact_phone}`}><Phone size={14} /> Zavolať</a>}
+                            <button className="button button-outline button-small" onClick={() => setPage("workOrders")}>Otvoriť zákazku</button>
+                          </div>
+                        </div>}
                       </li>;
                     })}</ul>
                     : <p className="assignment-notice-empty">Momentálne nemáte žiadne pridelené zákazky.</p>}
@@ -3168,7 +3954,7 @@ export function App() {
               {error && <p className="form-error" role="alert">{error}</p>}
               <section className="records-section">
                 <div className="section-title-row"><div><h2><ClipboardList size={17} /> Pracovné záznamy</h2><p>{isManager ? "Záznamy dostupné členom tejto firmy." : "Vaše pracovné záznamy."}</p></div><span className="count-pill">{visibleEntries.length} záznamov</span></div>
-                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p><button className="button button-primary button-small" onClick={() => { setShowEntryForm(true); setPage("attendance"); }}><Plus size={15} /> Nový záznam</button></div> : (
+                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p>{isEmployeeUser && <button className="button button-primary button-small" onClick={() => { setShowEntryForm(true); setPage("attendance"); }}><Plus size={15} /> Nový záznam</button>}</div> : (
                   <div className="record-list">{visibleEntries.map((entry) => {
                     const author = roster.find((member) => member.user_id === entry.user_id);
                     return <article className="record-card" key={entry.id}>
@@ -3196,11 +3982,11 @@ export function App() {
           <button className={`mobile-nav-link ${page === "workOrders" ? "active" : ""}`} aria-current={page === "workOrders" ? "page" : undefined} onClick={() => { setPage("workOrders"); setError(""); setNotice(""); }}>
             <ClipboardList size={19} /><span>Zákazky</span>
           </button>
+          {canAccessCustomers && <button className={`mobile-nav-link ${page === "customers" ? "active" : ""}`} aria-current={page === "customers" ? "page" : undefined} onClick={() => { setPage("customers"); setError(""); setNotice(""); }}>
+            <Users size={19} /><span>Zákazníci</span>
+          </button>}
           <button className={`mobile-nav-link ${page === "trips" ? "active" : ""}`} aria-current={page === "trips" ? "page" : undefined} onClick={() => { setPage("trips"); setError(""); setTripNotice(""); }}>
             <MapPin size={19} /><span>Jazdy</span>
-          </button>
-          <button className={`mobile-nav-link ${page === "attendance" && showEntryForm ? "active" : ""}`} aria-current={page === "attendance" && showEntryForm ? "page" : undefined} onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}>
-            <Plus size={20} /><span>Nový záznam</span>
           </button>
           {isManager && <button className={`mobile-nav-link ${page === "team" ? "active" : ""}`} aria-current={page === "team" ? "page" : undefined} onClick={() => setPage("team")}>
             <Users size={19} /><span>Tím</span>
@@ -3287,6 +4073,28 @@ export function App() {
         </>}
         <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
       </section>}
+      {canAccessCustomers && <section className="print-report customers-print-report">
+        <header className="print-report-header"><span className="brand"><span className="brand-mark">w</span> workena</span><span>Databáza zákazníkov</span></header>
+        <h1>Zákazníci{isCompanyOwner && customerOwnerId !== "ALL" ? ` — ${roster.find((member) => member.user_id === customerOwnerId)?.full_name || ""}` : ""}</h1>
+        <p className="print-report-company">{activeMembership?.company.name} · Vygenerované {dateLabel(new Date().toISOString())}</p>
+        <table><thead><tr><th>Dátum</th><th>Meno</th><th>Lokalita</th><th>Dopyt</th><th>Produkt</th><th>CP poslaná</th><th>Kontakt</th><th>Približná cena</th><th>Stav</th></tr></thead>
+          <tbody>{visibleCustomers.map((customer) => <tr key={customer.id}>
+            <td>{customer.customer_date}</td><td>{customer.full_name}</td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ?? "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "—" : `${hoursLabel(Number(customer.estimated_price))} €`}</td><td>{customerStatusName(customer.status)}</td>
+          </tr>)}</tbody>
+        </table>
+        <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
+      </section>}
+      {showLunchBreakPrompt && <div className="modal-backdrop" role="presentation">
+        <section className="panel detail-modal lunch-break-prompt" role="dialog" aria-modal="true" aria-labelledby="lunch-break-title">
+          <div className="modal-heading"><div><span className="eyebrow">UKONČENIE ZMENY</span><h2 id="lunch-break-title">Mali ste prestávku na obed?</h2></div></div>
+          <p>Pri odpovedi Áno sa odpočíta 30 minút. Pri odpovedi Nie sa započíta celý čas a k dochádzke sa pridá poznámka.</p>
+          <div className="form-actions">
+            <button className="button button-outline" disabled={busy} onClick={() => setShowLunchBreakPrompt(false)}>Pokračovať v práci</button>
+            <button className="button button-outline" disabled={busy} onClick={() => { setShowLunchBreakPrompt(false); void attendanceAction("end_attendance", false); }}>Nie, prestávku som nemal</button>
+            <button className="button button-primary" disabled={busy} onClick={() => { setShowLunchBreakPrompt(false); void attendanceAction("end_attendance", true); }}>Áno, odpočítať 30 min</button>
+          </div>
+        </section>
+      </div>}
       {selectedEntry && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedId(null); }}>
         <section className="detail-panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="entry-detail-title">
           <div className="detail-modal-heading"><div className="detail-modal-title-icon"><ClipboardList size={21} /></div><div className="detail-modal-title-copy"><span className="eyebrow">PRACOVNÝ ZÁZNAM</span><h2 id="entry-detail-title">{selectedEntry.work_type}</h2><p>{roster.find((member) => member.user_id === selectedEntry.user_id)?.full_name || roster.find((member) => member.user_id === selectedEntry.user_id)?.email || "Vaše pracovné hodiny"}</p></div><button className="logout-button" aria-label="Zavrieť detail" onClick={() => setSelectedId(null)}><X size={18} /></button></div>

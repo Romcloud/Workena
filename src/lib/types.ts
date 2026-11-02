@@ -8,6 +8,10 @@ export type Membership = {
   email: string;
   full_name: string | null;
   role: Role;
+  is_employee?: boolean;
+  is_salesperson?: boolean;
+  is_external?: boolean;
+  is_minor?: boolean;
   active: boolean;
   deactivated_at: string | null;
   created_at: string;
@@ -85,6 +89,7 @@ export type AttendanceShift = {
   started_at: string;
   ended_at: string | null;
   source_work_entry_id: string | null;
+  note?: string | null;
 };
 
 export type AttendanceBreak = {
@@ -103,7 +108,11 @@ export type WorkOrder = {
   created_by: string | null;
   title: string;
   address: string;
+  contact_phone: string | null;
   due_date: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  time_to_arrange?: boolean;
   description: string;
   status: WorkOrderStatus;
   employee_note: string | null;
@@ -113,6 +122,40 @@ export type WorkOrder = {
   created_at: string;
   updated_at: string;
   assignees?: WorkOrderAssignment[];
+};
+
+export type CompanyJoinRequest = {
+  id: string;
+  company_id: string;
+  user_id: string;
+  email: string;
+  full_name: string | null;
+  status: "PENDING" | "ACCEPTED" | "REJECTED";
+  created_at: string;
+};
+
+export type CompanySearchResult = {
+  company_id: string;
+  company_name: string;
+};
+
+export type CustomerStatus = "APPROVED" | "REJECTED" | "NO_RESPONSE";
+
+export type Customer = {
+  id: string;
+  company_id: string;
+  salesperson_id: string;
+  customer_date: string;
+  full_name: string;
+  location: string;
+  lead_source: string;
+  product: string;
+  quote_sent_date: string | null;
+  contact_details: string;
+  estimated_price: number | null;
+  status: CustomerStatus;
+  created_at: string;
+  updated_at: string;
 };
 
 export type WorkOrderAssignment = {
