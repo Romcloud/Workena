@@ -338,6 +338,7 @@ export function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const attendanceRequest = useRef(0);
+  const authUserId = useRef<string | null>(null);
   const workOrderRequest = useRef(0);
   const workOrdersCompany = useRef("");
   const workOrderPhotosRequest = useRef(0);
@@ -348,6 +349,19 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem("workena-page", page);
   }, [page]);
+
+  useEffect(() => {
+    const updateAttendanceClock = () => setAttendanceNow(Date.now());
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") updateAttendanceClock();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", updateAttendanceClock);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", updateAttendanceClock);
+    };
+  }, []);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -410,8 +424,13 @@ export function App() {
 
     let alive = true;
     const { data } = client.auth.onAuthStateChange((event, nextSession) => {
+      const previousUserId = authUserId.current;
+      const nextUserId = nextSession?.user.id ?? null;
+      authUserId.current = nextUserId;
       setSession(nextSession);
-      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT") return;
+      const signedOut = event === "SIGNED_OUT";
+      const switchedUser = event === "SIGNED_IN" && previousUserId !== null && nextUserId !== previousUserId;
+      if (!signedOut && !switchedUser) return;
       setMemberships([]);
       setCompanyId("");
       setEntries([]);
@@ -433,6 +452,7 @@ export function App() {
     void client.auth.getSession().then(({ data: sessionData, error: sessionError }) => {
       if (!alive) return;
       if (sessionError) setError(sessionError.message);
+      authUserId.current = sessionData.session?.user.id ?? null;
       setSession(sessionData.session);
       setAuthReady(true);
     });
