@@ -56,6 +56,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_GOPAY_TEST_MODE: ${{ vars.VITE_GOPAY_TEST_MODE }}
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

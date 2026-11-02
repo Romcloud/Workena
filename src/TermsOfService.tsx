@@ -22,7 +22,7 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
             Obchodné označenie: ROVOLT<br />
             IČO: 57875189<br />
             DIČ: 1121595376<br />
-            IČ DPH: [DOPLNIŤ CELÉ IČ DPH]<br />
+            IČ DPH: SK1121595376<br />
             Miesto podnikania: MPČĽ 3053/11, 058 01 Poprad, Slovenská republika<br />
             Zápis: Okresný úrad Poprad, číslo živnostenského registra 740-47346<br />
             E-mail: <a href="mailto:info@rovolt.sk">info@rovolt.sk</a><br />
@@ -74,13 +74,13 @@ export function TermsOfService({ onBack }: TermsOfServiceProps) {
             Balík, jeho funkcie, cena, mena, dĺžka obdobia a prípadné dane sa riadia údajmi zobrazenými v záväznej objednávke pred jej potvrdením. Návrhové alebo testovacie ceny nie sú ponukou, kým ich Poskytovateľ výslovne neoznačí ako dostupné na objednanie.
           </p>
           <p>
-            V aplikácii sú zobrazené návrhové ceny 19 €, 39 € a 69 € mesačne. Ich daňový status nie je potvrdený: nie je určené, či sumy zahŕňajú DPH alebo sú bez DPH. Sadzba 23 % je uvedená na kontrolu; pred sprístupnením záväznej ponuky treba potvrdiť daňové zaobchádzanie a výslednú cenu.
+            Návrhové ceny Basic 19 €, Pro 39 € a Team 69 € mesačne sú konečné sumy vrátane DPH 23 %. Rozpis: Basic 15,45 € bez DPH + 3,55 € DPH; Pro 31,71 € bez DPH + 7,29 € DPH; Team 56,10 € bez DPH + 12,90 € DPH. Tieto ceny zatiaľ nie sú záväznou ponukou na objednanie.
           </p>
           <p>
             Platba je splatná spôsobom a v lehote uvedenými pri objednávke. Samotné zobrazenie platobných údajov, vytvorenie QR kódu alebo odoslanie potvrdenia používateľom neznamená prijatie platby ani aktiváciu plateného balíka. Aktivácia nastane až po potvrdení platby Poskytovateľom alebo platobnou bránou podľa zobrazeného procesu.
           </p>
           <p>
-            Aktuálna aplikácia zobrazuje pri žiadosti o licenciu údaje na bankový prevod a platbu potvrdzuje správca Workena. Platobná brána GoPay ani platba kartou cez GoPay nie sú zapojené. Web aktuálne nemá automatický proces objednávky cez GoPay.
+            Aktuálna aplikácia zobrazuje pri žiadosti o licenciu údaje na bankový prevod a platbu potvrdzuje správca Workena. Prípadný GoPay testovací režim slúži len na overenie integrácie, nie je prijatím skutočnej objednávky ani aktiváciou licencie. Skutočné platby budú dostupné až po schválení GoPay a výslovnom zapnutí produkčného režimu.
           </p>
           <p>
             Opakované predplatné a automatické obnovovanie vzniknú iba vtedy, ak sú pred dokončením objednávky jasne uvedené obdobie, cena, pravidlá obnovy a spôsob ukončenia a používateľ s nimi výslovne súhlasí. Zmenu ceny alebo podstatných vlastností aktívneho predplatného Poskytovateľ oznámi vopred; práva zákazníka ukončiť zmluvu podľa zákona zostávajú zachované.

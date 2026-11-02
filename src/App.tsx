@@ -52,6 +52,7 @@ const MAX_PHOTOS = 10;
 const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const WORK_ORDER_PHOTO_BUCKET = "work-order-photos";
 const ABSENCE_ATTACHMENT_BUCKET = "absence-attachments";
+const GOPAY_TEST_MODE = import.meta.env.VITE_GOPAY_TEST_MODE === "true";
 const PAYMENT_IBAN = "SK5811000000002948309028";
 const PAYMENT_BENEFICIARY = "Roman Chlebovec - ROVOLT";
 const PAYMENT_PLAN_DETAILS: Record<PaymentPlan, { name: string; amount: number }> = {
@@ -326,6 +327,7 @@ export function App() {
   const [newMemberType, setNewMemberType] = useState("EMPLOYEE");
   const [pendingAbsenceAttachment, setPendingAbsenceAttachment] = useState<File | null>(null);
   const [previewPlan, setPreviewPlan] = useState<PaymentPlan | "">("");
+  const [gopayTestMessage, setGopayTestMessage] = useState("");
   const [newCompanyName, setNewCompanyName] = useState("");
   const [billingName, setBillingName] = useState("");
   const [billingIco, setBillingIco] = useState("");
@@ -405,6 +407,41 @@ export function App() {
     session?.user.email?.split("@")[0] ??
     "Používateľ";
   const client = supabase;
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!GOPAY_TEST_MODE || params.get("gopay_test") !== "return") return;
+    setPage("profile");
+
+    const orderNumber = params.get("order_number");
+    if (!orderNumber) {
+      setGopayTestMessage("Návrat z testovacej platby nemá číslo objednávky.");
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+    if (!client || !session) return;
+
+    let active = true;
+    void client.functions.invoke<{ status: string }>("gopay-test", {
+      body: { action: "status", orderNumber },
+    }).then(({ data, error: paymentError }) => {
+      if (!active) return;
+      setGopayTestMessage(paymentError
+        ? `Stav testovacej platby sa nepodarilo overiť: ${paymentError.message}`
+        : data?.status === "PAID"
+          ? "Testovacia platba GoPay bola úspešne dokončená. Licencia sa testovacou platbou neaktivovala."
+          : `Testovacia platba GoPay má stav: ${data?.status ?? "neznámy"}. Licencia sa neaktivovala.`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }).catch((paymentError: unknown) => {
+      if (!active) return;
+      setGopayTestMessage(`Stav testovacej platby sa nepodarilo overiť: ${errorText(paymentError)}`);
+      window.history.replaceState({}, "", window.location.pathname);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [client, session]);
 
   useEffect(() => {
     if (activeCompanyId) window.localStorage.setItem("workena-company", activeCompanyId);
@@ -620,6 +657,25 @@ export function App() {
         variableSymbol: request.variable_symbol,
       });
     }
+  };
+
+  const startGoPayTestPayment = async (plan: PaymentPlan) => {
+    if (!client || !activeCompanyId) return;
+    setError("");
+    setBusy(true);
+    const { data, error: paymentError } = await client.functions.invoke<{ paymentUrl: string }>("gopay-test", {
+      body: { action: "create", companyId: activeCompanyId, plan },
+    });
+    setBusy(false);
+    if (paymentError) {
+      setError(paymentError.message);
+      return;
+    }
+    if (!data?.paymentUrl) {
+      setError("GoPay testovacia platba nevrátila odkaz na platobnú bránu.");
+      return;
+    }
+    window.location.assign(data.paymentUrl);
   };
 
   const refreshWorkOrders = useCallback(async () => {
@@ -2737,22 +2793,22 @@ export function App() {
               <div><span className="pricing-proposal-name">Basic</span><strong>19,00 €<small> / mesiac</small></strong></div>
               <p>Zamestnanci, úlohy a základná evidencia.</p>
               <p className="muted"><small>Maximálne 10 zamestnancov.</small></p>
-              <small className="price-tax-note">Návrhová cena; DPH treba potvrdiť.</small>
+              <small className="price-tax-note">Konečná cena vrátane DPH 23 %.</small>
             </article>
             <article className="panel pricing-proposal-card">
               <div><span className="pricing-proposal-name">Pro</span><strong>39,00 €<small> / mesiac</small></strong></div>
               <p>Dochádzka, výkazy, exporty, reporty a priraďovanie zákaziek.</p>
               <p className="muted"><small>Maximálne 30 zamestnancov.</small></p>
-              <small className="price-tax-note">Návrhová cena; DPH treba potvrdiť.</small>
+              <small className="price-tax-note">Konečná cena vrátane DPH 23 %.</small>
             </article>
             <article className="panel pricing-proposal-card">
               <div><span className="pricing-proposal-name">Team</span><strong>69,00 €<small> / mesiac</small></strong></div>
               <p>Viac tímov, zákazky, pokročilé reporty a oprávnenia.</p>
               <p className="muted"><small>Neobmedzený počet zamestnancov.</small></p>
-              <small className="price-tax-note">Návrhová cena; DPH treba potvrdiť.</small>
+              <small className="price-tax-note">Konečná cena vrátane DPH 23 %.</small>
             </article>
           </div>
-          <p className="sales-price-disclaimer">Platené sumy Basic, Pro a Team sú iba návrhové ceny a momentálne nie sú záväznou ponukou na objednanie. Uvedená sadzba DPH na kontrolu je 23 %; pri návrhových cenách nie je potvrdené, či sumy DPH zahŕňajú alebo sú bez DPH. Pred spustením predaja treba daňový status potvrdiť. Platba cez GoPay nie je v aplikácii aktuálne zapojená.</p>
+          <p className="sales-price-disclaimer">Platené sumy Basic, Pro a Team sú návrhové ceny a momentálne nie sú záväznou ponukou na objednanie. Zobrazené sumy sú konečné vrátane DPH 23 %: Basic 19,00 €, Pro 39,00 € a Team 69,00 € mesačne.</p>
         </section>
         <section className="landing-contact" id="kontakt">
           <div>
@@ -2762,15 +2818,15 @@ export function App() {
           </div>
           <address>
             <span>IČO: 57875189 · DIČ: 1121595376</span>
-            <span>IČ DPH: [DOPLNIŤ CELÉ IČ DPH]</span>
+            <span>IČ DPH: SK1121595376</span>
             <span>MPČĽ 3053/11, 058 01 Poprad, Slovensko</span>
             <a href="mailto:info@rovolt.sk">info@rovolt.sk</a>
             <a href="tel:+421904826557">0904 826 557</a>
           </address>
         </section>
         <section className="landing-payments">
-          <strong>Platba a grafické podklady GoPay</strong>
-          <p>Aplikácia aktuálne zobrazuje údaje k bankovému prevodu pri žiadosti o licenciu. Platba kartou cez GoPay zatiaľ nie je zapojená; nasledujúce grafické podklady preto neznamenajú, že tieto spôsoby platby sú aktívne.</p>
+          <strong>Testovacia verzia GoPay a platobné podklady</strong>
+          <p>GoPay sandbox integrácia sa pripravuje na schválenie. Testovací checkout bude dostupný vlastníkovi firmy po nakonfigurovaní GoPay testovacích údajov; testovacia platba neaktivuje licenciu. Produkčné platby zatiaľ nie sú zapnuté.</p>
           <div className="payment-brand-assets" aria-label="Grafické podklady GoPay a platobných značiek">
             <img className="payment-brand-gopay" src="/bannerr3D/gopay-banner-colorfull.svg" alt="GoPay" />
             <img src="/bannerr3D/mastercard.png" alt="Mastercard" />
@@ -3565,8 +3621,9 @@ export function App() {
       {isManager && <section className="pricing-proposal">
         <header className="pricing-proposal-heading">
           <div><span className="eyebrow">NA TESTOVANIE SO ZÁKAZNÍKMI</span><h2>Návrh balíkov a cien</h2></div>
-          <p>Navrhované ceny na overenie záujmu. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné. Sadzba DPH na kontrolu: 23 %; nie je potvrdené, či sumy DPH zahŕňajú alebo sú bez DPH.</p>
+          <p>Navrhované ceny na overenie záujmu. Konečné sumy vrátane DPH 23 %: Basic 19 €, Pro 39 € a Team 69 € mesačne. Nejde o potvrdený priemer slovenského trhu ani o aktuálne dostupné predplatné.</p>
         </header>
+        {gopayTestMessage && <p className="invite-success" role="status">{gopayTestMessage}</p>}
         <div className="pricing-proposal-grid">
           <article className="panel pricing-proposal-card">
             <div><span className="pricing-proposal-name">Basic</span><strong>19 €<small> / mes.</small></strong></div>
@@ -3591,7 +3648,7 @@ export function App() {
           <div className="payment-instructions-copy">
             <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[previewPlan].name.toUpperCase()}</span>
             <h3>Platobné údaje pre plán {PAYMENT_PLAN_DETAILS[previewPlan].name}</h3>
-            <p>Toto je iba náhľad platobných údajov k návrhovej cene, nie záväzná objednávka. DPH je na kontrolu pri sadzbe 23 %; nie je potvrdené, či zobrazená suma DPH zahŕňa alebo je bez DPH. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
+            <p>Toto je iba náhľad platobných údajov k návrhovej cene vrátane DPH 23 %, nie záväzná objednávka. Žiadosť o licenciu sa odošle správcovi Workena až po kliknutí na tlačidlo nižšie.</p>
             <dl>
               <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
               <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
@@ -3602,13 +3659,15 @@ export function App() {
           <div className="form-actions">
             <button className="button button-quiet" onClick={() => setPreviewPlan("")}>Zavrieť náhľad</button>
             <button className="button button-primary" disabled={busy} onClick={() => void createPaymentRequest(previewPlan)}>Požiadať o licenciu</button>
+            {isCompanyOwner && GOPAY_TEST_MODE && <button className="button button-outline" disabled={busy} onClick={() => void startGoPayTestPayment(previewPlan)}>Otvoriť GoPay sandbox test</button>}
           </div>
+          {isCompanyOwner && <p className="payment-pending-note">GoPay sandbox je určený iba na testovanie integrácie. Testovacia transakcia nevytvorí ostrú objednávku a neaktivuje plán.</p>}
         </section>}
         {selectedPaymentRequest && <section className="panel payment-instructions">
           <div className="payment-instructions-copy">
             <span className="eyebrow">BANKOVÝ PREVOD · {PAYMENT_PLAN_DETAILS[selectedPaymentRequest.plan].name.toUpperCase()}</span>
             <h3>Dokončite platbu prevodom</h3>
-            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii. Zobrazené sumy vychádzajú z návrhových cien; DPH je na kontrolu pri sadzbe 23 % a nie je potvrdené, či sumy DPH zahŕňajú alebo sú bez DPH.</p>
+            <p>Údaje z QR kódu si pred odoslaním skontrolujte v bankovej aplikácii. Zobrazená cena je konečná suma vrátane DPH 23 %.</p>
             <dl>
               <div><dt>Príjemca</dt><dd>{PAYMENT_BENEFICIARY}</dd></div>
               <div><dt>IBAN</dt><dd>{PAYMENT_IBAN}</dd></div>
