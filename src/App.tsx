@@ -319,6 +319,7 @@ export function App() {
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([""]);
   const [expandedDashboardOrderId, setExpandedDashboardOrderId] = useState<string | null>(null);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
+  const [calendarEmployeeFilter, setCalendarEmployeeFilter] = useState("ALL");
   const [selectedCalendarOrder, setSelectedCalendarOrder] = useState<WorkOrder | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
@@ -343,6 +344,10 @@ export function App() {
   const [adminEmailTargetId, setAdminEmailTargetId] = useState<string | null>(null);
   const [adminMaintenanceOpen, setAdminMaintenanceOpen] = useState(false);
   const [historyMonth, setHistoryMonth] = useState(() => localDateKey(new Date().toISOString()).slice(0, 7));
+  const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
+  const [googleCalendarBusy, setGoogleCalendarBusy] = useState(false);
+  const [googleCalendarLastSync, setGoogleCalendarLastSync] = useState("");
+  const [googleCalendarMessage, setGoogleCalendarMessage] = useState("");
   const [photos, setPhotos] = useState<PhotoView[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -448,6 +453,67 @@ export function App() {
       active = false;
     };
   }, [client, session]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!client || !session || !activeCompanyId || !isCompanyOwner || params.get("google_calendar") !== "connect") return;
+    if (!session.provider_token || !session.provider_refresh_token) {
+      setGoogleCalendarMessage("Google neposkytol obnovovací token. Skúste pripojenie zopakovať a potvrďte požadované prístupy.");
+      return;
+    }
+
+    let alive = true;
+    setGoogleCalendarBusy(true);
+    void client.functions.invoke<{ connected: boolean }>("google-calendar", {
+      body: {
+        action: "connect",
+        companyId: activeCompanyId,
+        accessToken: session.provider_token,
+        refreshToken: session.provider_refresh_token,
+      },
+    }).then(({ data, error: connectionError }) => {
+      if (!alive) return;
+      const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.delete("google_calendar");
+      window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+      if (connectionError) {
+        setGoogleCalendarMessage(connectionError.message);
+        return;
+      }
+      if (!data?.connected) {
+        setGoogleCalendarMessage("Google Kalendár sa nepodarilo pripojiť.");
+        return;
+      }
+      setGoogleCalendarConnected(true);
+      setGoogleCalendarMessage("Google Kalendár je prepojený. Zmeny sa synchronizujú automaticky.");
+    }).finally(() => {
+      if (alive) setGoogleCalendarBusy(false);
+    });
+    return () => { alive = false; };
+  }, [activeCompanyId, client, isCompanyOwner, session]);
+
+  useEffect(() => {
+    if (!client || !session || !activeCompanyId || !isCompanyOwner) {
+      setGoogleCalendarConnected(false);
+      setGoogleCalendarLastSync("");
+      return;
+    }
+    if (new URLSearchParams(window.location.search).get("google_calendar") === "connect") return;
+
+    let alive = true;
+    void client.functions.invoke<{ connected: boolean; lastSyncAt?: string | null }>("google-calendar", {
+      body: { action: "status", companyId: activeCompanyId },
+    }).then(({ data, error: statusError }) => {
+      if (!alive) return;
+      if (statusError) {
+        setGoogleCalendarMessage(statusError.message);
+        return;
+      }
+      setGoogleCalendarConnected(Boolean(data?.connected));
+      setGoogleCalendarLastSync(data?.lastSyncAt ?? "");
+    });
+    return () => { alive = false; };
+  }, [activeCompanyId, client, isCompanyOwner, session]);
 
   useEffect(() => {
     if (activeCompanyId) window.localStorage.setItem("workena-company", activeCompanyId);
@@ -817,6 +883,45 @@ export function App() {
     })));
   }, [activeCompanyId, client]);
 
+  const syncGoogleCalendarNow = useCallback(async () => {
+    if (!client || !activeCompanyId) return;
+    const { data, error: syncError } = await client.functions.invoke<{ syncedAt?: string; skipped?: boolean }>("google-calendar", {
+      body: { action: "sync", companyId: activeCompanyId },
+    });
+    if (syncError) throw syncError;
+    if (data?.skipped) {
+      setGoogleCalendarMessage("Synchronizácia už prebieha.");
+      return;
+    }
+    if (!data?.syncedAt) throw new Error("Google Kalendár nepotvrdil synchronizáciu.");
+    setGoogleCalendarLastSync(data.syncedAt);
+    setGoogleCalendarMessage("");
+    await refreshWorkOrders();
+  }, [activeCompanyId, client, refreshWorkOrders]);
+
+  useEffect(() => {
+    if (!client || !session || !activeCompanyId || !isCompanyOwner || !googleCalendarConnected) return;
+    let alive = true;
+    const syncCalendar = async () => {
+      try {
+        await syncGoogleCalendarNow();
+      } catch (reason: unknown) {
+        if (alive) setGoogleCalendarMessage(errorText(reason));
+      }
+    };
+    void syncCalendar();
+    const interval = window.setInterval(() => void syncCalendar(), 60_000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void syncCalendar();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [activeCompanyId, client, googleCalendarConnected, isCompanyOwner, session, syncGoogleCalendarNow]);
+
   const refreshWorkOrderPhotos = useCallback(async () => {
     if (!client || !activeCompanyId) return;
     const request = ++workOrderPhotosRequest.current;
@@ -1070,6 +1175,26 @@ export function App() {
     if (signInError) {
       setError(signInError.message);
       setBusy(false);
+    }
+  };
+
+  const connectGoogleCalendar = async () => {
+    if (!client) return;
+    setGoogleCalendarBusy(true);
+    setGoogleCalendarMessage("");
+    const redirectUrl = new URL(window.location.origin);
+    redirectUrl.searchParams.set("google_calendar", "connect");
+    const { error: connectionError } = await client.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: redirectUrl.toString(),
+        scopes: "https://www.googleapis.com/auth/calendar.events",
+        queryParams: { access_type: "offline", prompt: "consent" },
+      },
+    });
+    if (connectionError) {
+      setGoogleCalendarMessage(connectionError.message);
+      setGoogleCalendarBusy(false);
     }
   };
 
@@ -3324,7 +3449,9 @@ export function App() {
           .map((assignment) => assignment.user_id)
         : [order.assignee_id];
       return [...new Set(assigneeIds)]
-        .filter((userId) => isCompanyOwner || userId === session?.user.id)
+        .filter((userId) => isCompanyOwner
+          ? calendarEmployeeFilter === "ALL" || calendarEmployeeFilter === userId
+          : userId === session?.user.id)
         .map((userId) => ({
           order,
           userId,
@@ -3343,16 +3470,9 @@ export function App() {
         color: `hsl(${hue} 45% 28%)`,
       };
     };
-    const calendarEmployees = [...new Set(
-      calendarOrders
-        .filter(({ order }) => order.due_date.startsWith(workOrderMonth))
-        .map(({ userId }) => userId),
-    )]
-      .map((userId) => ({
-        userId,
-        member: roster.find((person) => person.user_id === userId),
-      }))
-      .filter((employee) => employee.member);
+    const calendarEmployees = roster
+      .filter((member) => member.active && (member.role === "EMPLOYEE" || member.is_employee))
+      .map((member) => ({ userId: member.user_id, member }));
     const calendarMonthStart = new Date(`${workOrderMonth}-01T12:00:00`);
     const calendarOffset = (calendarMonthStart.getDay() + 6) % 7;
     const calendarDayCount = new Date(calendarMonthStart.getFullYear(), calendarMonthStart.getMonth() + 1, 0).getDate();
@@ -3369,11 +3489,6 @@ export function App() {
           <div><span className="eyebrow">PRÁCA V TERÉNE</span><h1>Zákazky</h1><p>Priraďovanie, termíny a priebeh práce na jednotlivých zákazkách.</p></div>
           <button className="button button-primary" onClick={() => setShowWorkOrderForm(true)}><Plus size={16} /> Nová zákazka</button>
         </header>
-        <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
-          {categories.map((category) => <button key={category.id} type="button" className={`work-order-tab ${workOrderTab === category.id ? "active" : ""}`} onClick={() => setWorkOrderTab(category.id)}>
-            <span>{category.label}</span><b>{category.count}</b>
-          </button>)}
-        </nav>
         {showWorkOrderForm && <div className="modal-backdrop" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setShowWorkOrderForm(false);
         }}>
@@ -3430,7 +3545,26 @@ export function App() {
               </div>
             </div>
           </div>
+          {isCompanyOwner && <div className="calendar-google-sync">
+            <div><strong>Google Kalendár</strong><small>{googleCalendarConnected
+              ? `Prepojený${googleCalendarLastSync ? ` · synchronizované ${timeLabel(googleCalendarLastSync)}` : " · synchronizuje sa každú minútu"}`
+              : "Prepojte účet Google pre obojsmernú synchronizáciu zákaziek."}</small></div>
+            <div className="calendar-google-actions">
+              {googleCalendarConnected && <button className="button button-outline button-small" disabled={googleCalendarBusy} onClick={() => {
+                setGoogleCalendarBusy(true);
+                void syncGoogleCalendarNow().catch((reason: unknown) => setGoogleCalendarMessage(errorText(reason))).finally(() => setGoogleCalendarBusy(false));
+              }}>{googleCalendarBusy ? "Synchronizujem…" : "Synchronizovať teraz"}</button>}
+              <button className="button button-outline button-small" disabled={googleCalendarBusy} onClick={() => void connectGoogleCalendar()}>
+                {googleCalendarBusy ? "Pripájam…" : googleCalendarConnected ? "Znovu pripojiť účet" : "Prepojiť Google"}
+              </button>
+            </div>
+            {googleCalendarMessage && <p className="form-error" role="alert">{googleCalendarMessage}</p>}
+          </div>}
           {isCompanyOwner && calendarEmployees.length > 0 && <div className="calendar-legend" aria-label="Farby zákaziek podľa zamestnanca">
+            <label className="calendar-employee-filter"><span>Zamestnanec</span><select value={calendarEmployeeFilter} onChange={(event) => setCalendarEmployeeFilter(event.target.value)}>
+              <option value="ALL">Všetci zamestnanci</option>
+              {calendarEmployees.map(({ userId, member }) => <option key={userId} value={userId}>{member?.full_name || member?.email}</option>)}
+            </select></label>
             {calendarEmployees.map(({ userId, member }) => <span className="calendar-legend-item" key={userId}>
               <i style={getCalendarEmployeeColor(userId)} />
               {member?.full_name || member?.email}
@@ -3452,6 +3586,11 @@ export function App() {
             })}
           </div>
         </section>
+        <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
+          {categories.map((category) => <button key={category.id} type="button" className={`work-order-tab ${workOrderTab === category.id ? "active" : ""}`} onClick={() => setWorkOrderTab(category.id)}>
+            <span>{category.label}</span><b>{category.count}</b>
+          </button>)}
+        </nav>
         <section className="records-section">
           <div className="section-title-row"><div><h2><ClipboardList size={17} /> Zoznam zákaziek</h2><p>{isManager ? "Zákazky celej firmy." : "Zákazky priradené vám."}</p></div><span className="count-pill">{filteredWorkOrders.length} zákaziek</span></div>
           <div className="panel work-order-filter-bar">

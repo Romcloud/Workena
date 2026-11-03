@@ -375,6 +375,14 @@ button:disabled { opacity: .65; cursor: wait; }
 .calendar-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: -4px 0 10px; }
 .calendar-legend-item { display: inline-flex; align-items: center; gap: 5px; color: #596559; font-size: 9px; }
 .calendar-legend-item i { width: 10px; height: 10px; border-radius: 3px; }
+.calendar-employee-filter { display: inline-flex; align-items: center; gap: 6px; color: #596559; font-size: 9px; }
+.calendar-employee-filter select { min-width: 150px; padding: 5px 8px; font-size: 10px; }
+.calendar-google-sync { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid #e6ebe4; border-radius: 8px; background: #fafcf9; }
+.calendar-google-sync > div:first-child { display: grid; gap: 3px; }
+.calendar-google-sync strong { color: #3e4d3f; font-size: 11px; }
+.calendar-google-sync small { color: #758073; font-size: 9px; }
+.calendar-google-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.calendar-google-sync > .form-error { flex-basis: 100%; margin: 0; }
 .calendar-heading-actions, .customer-export-actions, .work-order-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .assignee-picker { display: grid; gap: 7px; }
 .assignee-picker-row { display: flex; gap: 7px; }

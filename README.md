@@ -83,7 +83,46 @@ Pred nasadením aktuálnej verzie spustite v **Supabase → SQL Editor → New q
 
 Následne, ak ešte neboli spustené, aplikujte v poradí aj [`20261010001100_attendance_edits_and_multi_assignee_orders.sql`](./supabase/migrations/20261010001100_attendance_edits_and_multi_assignee_orders.sql), [`20261011000100_employee_work_orders_and_absences.sql`](./supabase/migrations/20261011000100_employee_work_orders_and_absences.sql), [`20261011001000_delete_attendance_shift.sql`](./supabase/migrations/20261011001000_delete_attendance_shift.sql), [`20261011002000_platform_admin_licensing.sql`](./supabase/migrations/20261011002000_platform_admin_licensing.sql), [`20261011003000_admin_delete_company.sql`](./supabase/migrations/20261011003000_admin_delete_company.sql), [`20261011004000_plan_limits_billing_attachments_trips.sql`](./supabase/migrations/20261011004000_plan_limits_billing_attachments_trips.sql), [`20261011220900_accountant_role.sql`](./supabase/migrations/20261011220900_accountant_role.sql), [`20261013000100_customers_and_work_order_details.sql`](./supabase/migrations/20261013000100_customers_and_work_order_details.sql), [`20261102000100_employee_types_join_requests_and_scheduling.sql`](./supabase/migrations/20261102000100_employee_types_join_requests_and_scheduling.sql), [`20261102000200_gopay_sandbox_test_payments.sql`](./supabase/migrations/20261102000200_gopay_sandbox_test_payments.sql), [`20261103000100_pro_trial_and_recurring_billing.sql`](./supabase/migrations/20261103000100_pro_trial_and_recurring_billing.sql) a napokon [`20261103000200_work_order_workflow.sql`](./supabase/migrations/20261103000200_work_order_workflow.sql). Každú spustite iba raz a až po jej predchádzajúcich migráciách.
 
-Po týchto migráciách spustite [`20261103000300_company_invitations.sql`](./supabase/migrations/20261103000300_company_invitations.sql). Žiadosti o vstup aj pozvánky do firmy posielajú e-mail cez Supabase Edge Function. Nastavte v Supabase Edge Function secrets `RESEND_API_KEY` a `WORKENA_SITE_URL` (napríklad `https://workena.eu`) a nasaďte aktualizovanú funkciu príkazom `supabase functions deploy send-email`. Serverová premenná `SUPABASE_SERVICE_ROLE_KEY` musí byť dostupná funkcii; nikdy ju nevkladajte do klientského kódu.
+Po týchto migráciách spustite [`20261103000300_company_invitations.sql`](./supabase/migrations/20261103000300_company_invitations.sql) a následne [`20261103000400_google_calendar_sync.sql`](./supabase/migrations/20261103000400_google_calendar_sync.sql). Žiadosti o vstup aj pozvánky do firmy posielajú e-mail cez Supabase Edge Function. Nastavte v Supabase Edge Function secrets `RESEND_API_KEY` a `WORKENA_SITE_URL` (napríklad `https://workena.eu`) a nasaďte aktualizovanú funkciu príkazom `supabase functions deploy send-email`. Serverová premenná `SUPABASE_SERVICE_ROLE_KEY` musí byť dostupná funkcii; nikdy ju nevkladajte do klientského kódu.
+
+### Synchronizácia zákaziek s Google Kalendárom
+
+Vlastník môže pripojiť Google účet firmy v karte **Zákazky**. Kalendár sa synchronizuje obojstranne pre spárované aktívne zákazky: zmeny názvu, adresy, opisu a termínu sa prenášajú oboma smermi. Nové udalosti vytvorené priamo v Google Kalendári sa do Workena nepridávajú. Dokončenie zákazky vo Workena odstráni jej spárovanú udalosť z Google Kalendára. Ak sa udalosť odstráni v Google Kalendári, zákazka zostane vo Workena a udalosť sa vytvorí znovu až po ďalšej zmene zákazky.
+
+Na zapnutie integrácie po aplikácii migrácie:
+
+1. V Google Cloud OAuth consent screen povoľte scope `https://www.googleapis.com/auth/calendar.events`. Prihlásenie používateľa musí tento prístup schváliť; pre produkciu dokončite prípadné požadované overenie Google aplikácie.
+2. Do Supabase Edge Function secrets nastavte `GOOGLE_CLIENT_ID` a `GOOGLE_CLIENT_SECRET` z toho istého OAuth klienta, ktorý je nakonfigurovaný v Supabase Google provider. Vygenerujte jedinečný náhodný tajný kľúč s aspoň 32 bajtmi náhodnosti a nastavte ho ako `GOOGLE_CALENDAR_SYNC_SECRET`. Tajné hodnoty neukladajte do frontendového kódu ani GitHub variables.
+3. Nasaďte funkciu príkazom `supabase functions deploy google-calendar`. Súbor [`supabase/config.toml`](./supabase/config.toml) vypína kontrolu JWT na bráne len pre túto funkciu; používateľské akcie si JWT overujú vo funkcii a plánovaná akcia vyžaduje samostatný tajný header.
+4. V Supabase **Database → Extensions** povoľte `pg_cron`, `pg_net` a `supabase_vault`. V SQL Editore uložte rovnaký tajný kľúč do Vault a vytvorte minútový plánovač (nahraďte `<project-ref>` aj ukážkovú hodnotu tajného kľúča; SQL spustite iba raz):
+
+   ```sql
+   select vault.create_secret('<rovnaky-nahodny-tajny-kluc>', 'google_calendar_sync_secret');
+
+   select cron.schedule(
+     'workena-google-calendar-sync',
+     '* * * * *',
+     $job$
+     select net.http_post(
+       url := 'https://<project-ref>.supabase.co/functions/v1/google-calendar',
+       headers := jsonb_build_object(
+         'Content-Type', 'application/json',
+         'x-google-calendar-sync-secret', (
+           select decrypted_secret
+           from vault.decrypted_secrets
+           where name = 'google_calendar_sync_secret'
+           limit 1
+         )
+       ),
+       body := '{"action":"scheduled_sync"}'::jsonb
+     );
+     $job$
+   );
+   ```
+
+   Minútový plánovač synchronizuje aj pri zatvorenej aplikácii; otvorená aplikácia spúšťa synchronizáciu navyše. Zlyhania naplánovaného behu vráti funkcia s HTTP 500 a možno ich kontrolovať v logoch Edge Function. Pri odstraňovaní plánu použite `select cron.unschedule('workena-google-calendar-sync');`.
+
+Prístupové tokeny sa uchovávajú iba v serverovej tabuľke bez prístupu klientských rolí. Súbežné synchronizácie jednej firmy blokuje krátky databázový zámok.
 
 ### GoPay sandbox – príprava na schválenie
 
