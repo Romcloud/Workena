@@ -12,7 +12,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type EmailTemplate = "company_welcome" | "company_join_request" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
+type EmailTemplate = "company_welcome" | "company_join_request" | "company_invitation" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 type TemplateData = {
   companyName?: string;
@@ -28,6 +28,9 @@ type TemplateData = {
   requestId?: string;
   requesterName?: string;
   requesterEmail?: string;
+  invitationId?: string;
+  invitationUrl?: string;
+  invitedEmail?: string;
 };
 
 function json(status: number, body: Record<string, unknown>) {
@@ -82,6 +85,18 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
           <p>Dobrý deň,</p>
           <p>Používateľ <strong>${escapeHtml(data.requesterName ?? "Používateľ")}</strong> (${escapeHtml(data.requesterEmail ?? "")}) požiadal o prístup do firmy <strong>${companyName}</strong>.</p>
           <p>Žiadosť môžete prijať alebo odstrániť v časti Tím vo Workena.</p>
+        `),
+      };
+    case "company_invitation":
+      return {
+        subject: `Pozvánka do firmy ${data.companyName ?? "vo Workena"}`,
+        html: layout("Pozvánka do firemného tímu", `
+          <p>${greeting}</p>
+          <p>pozývame vás do firemného priestoru <strong>${companyName}</strong> v aplikácii Workena.</p>
+          <p>Kliknutím na tlačidlo si bezpečne overíte e-mail a automaticky sa pripojíte k firme.</p>
+          <p style="margin:24px 0;"><a href="${escapeHtml(data.invitationUrl ?? "")}" style="display:inline-block;background:#315b43;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold;">Prijať pozvánku</a></p>
+          <p style="font-size:13px;color:#6b7280;">Ak tlačidlo nefunguje, otvorte tento odkaz:<br/><a href="${escapeHtml(data.invitationUrl ?? "")}">${escapeHtml(data.invitationUrl ?? "")}</a></p>
+          <p>Odkaz je určený pre adresu <strong>${escapeHtml(data.invitedEmail ?? "")}</strong>. Ak už prihlasovací odkaz vypršal, požiadajte vlastníka firmy o novú pozvánku.</p>
         `),
       };
     case "license_requested":
@@ -189,6 +204,77 @@ Deno.serve(async (req) => {
         companyName: company?.name,
         requesterName: request.full_name ?? request.email,
         requesterEmail: request.email,
+      };
+    } else if (body.template === "company_invitation") {
+      if (!body.data?.invitationId) return json(400, { error: "Chýba identifikátor pozvánky." });
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!serviceRoleKey) return json(500, { error: "Serverová databázová služba nie je nakonfigurovaná." });
+      const appSiteUrl = Deno.env.get("WORKENA_SITE_URL");
+      if (!appSiteUrl) return json(500, { error: "Adresa aplikácie nie je nakonfigurovaná." });
+
+      const adminClient = createClient(supabaseUrl, serviceRoleKey);
+      const { data: invitation, error: invitationError } = await adminClient
+        .from("company_invitations")
+        .select("id, company_id, invited_by, email, full_name, expires_at, accepted_at")
+        .eq("id", body.data.invitationId)
+        .eq("invited_by", userData.user.id)
+        .is("accepted_at", null)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+      if (invitationError || !invitation) return json(403, { error: invitationError?.message ?? "Pozvánka sa nenašla alebo jej platnosť vypršala." });
+
+      const [{ data: membership, error: membershipError }, { data: company, error: companyError }] = await Promise.all([
+        adminClient
+          .from("memberships")
+          .select("id")
+          .eq("company_id", invitation.company_id)
+          .eq("user_id", userData.user.id)
+          .eq("active", true)
+          .in("role", ["OWNER", "MANAGER"])
+          .maybeSingle(),
+        adminClient.from("companies").select("name").eq("id", invitation.company_id).maybeSingle(),
+      ]);
+      if (membershipError || companyError) return json(500, { error: membershipError?.message ?? companyError?.message ?? "Podrobnosti firmy sa nepodarilo načítať." });
+      if (!membership || !company) return json(403, { error: "Na odoslanie pozvánky do firmy nemáte oprávnenie." });
+
+      let redirectTo: string;
+      try {
+        const appUrl = new URL(appSiteUrl);
+        if (appUrl.protocol !== "https:" && appUrl.hostname !== "localhost") {
+          return json(500, { error: "Adresa aplikácie musí používať HTTPS." });
+        }
+        appUrl.search = "";
+        appUrl.hash = "";
+        appUrl.searchParams.set("invite", invitation.id);
+        redirectTo = appUrl.toString();
+      } catch {
+        return json(500, { error: "Adresa aplikácie nie je platná." });
+      }
+
+      const invitationLink = await adminClient.auth.admin.generateLink({
+        type: "invite",
+        email: invitation.email,
+        options: { data: { full_name: invitation.full_name }, redirectTo },
+      });
+      let invitationUrl = invitationLink.data.properties?.action_link;
+      if (invitationLink.error || !invitationUrl) {
+        const existingUserLink = await adminClient.auth.admin.generateLink({
+          type: "magiclink",
+          email: invitation.email,
+          options: { redirectTo },
+        });
+        if (existingUserLink.error || !existingUserLink.data.properties?.action_link) {
+          return json(500, { error: existingUserLink.error?.message ?? invitationLink.error?.message ?? "Prihlasovací odkaz sa nepodarilo vytvoriť." });
+        }
+        invitationUrl = existingUserLink.data.properties.action_link;
+      }
+
+      recipients = [invitation.email];
+      templateData = {
+        companyName: company.name,
+        fullName: invitation.full_name,
+        invitationUrl,
+        invitedEmail: invitation.email,
       };
     } else if (!body.to || body.to.toLowerCase() !== (userData.user.email ?? "").toLowerCase()) {
       return json(403, { error: "Prístup odmietnutý." });

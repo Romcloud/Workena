@@ -371,12 +371,10 @@ button:disabled { opacity: .65; cursor: wait; }
 .calendar-day:nth-child(7n) { border-right: 0; }
 .calendar-day-empty { background: #fafbf9; }
 .calendar-day-number { align-self: flex-end; color: #69736a; font-size: 10px; }
-.calendar-order { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #526454; background: #edf4eb; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.calendar-order-in_progress { color: #795f31; background: #faf1dc; }
-.calendar-order-measured { color: #5263a0; background: #eef0fb; }
-.calendar-order-working { color: #9a5c2b; background: #fbefe4; }
-.calendar-order-done { color: #346c4c; background: #e5f2e6; }
-.calendar-attendance { display: flex; align-items: center; gap: 4px; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #44617b; background: #eaf1f7; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-order { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: -4px 0 10px; }
+.calendar-legend-item { display: inline-flex; align-items: center; gap: 5px; color: #596559; font-size: 9px; }
+.calendar-legend-item i { width: 10px; height: 10px; border-radius: 3px; }
 .calendar-heading-actions, .customer-export-actions, .work-order-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .assignee-picker { display: grid; gap: 7px; }
 .assignee-picker-row { display: flex; gap: 7px; }
@@ -413,11 +411,6 @@ button:disabled { opacity: .65; cursor: wait; }
 .permission-toggle { display: inline-flex; align-items: center; gap: 6px; color: #586458; font-size: 10px; white-space: nowrap; }
 .permission-toggle input { accent-color: var(--green); }
 .calendar-day > small { color: var(--muted); font-size: 8px; }
-.calendar-absence { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border: 0; border-radius: 5px; color: #4a5c8a; background: #e9edf9; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.calendar-absence-home_office { color: #6a4f91; background: #efe8f6; }
-.calendar-absence-out_of_office { color: #7a5a2b; background: #f7ead9; }
-.calendar-absence-other { color: #5a5f66; background: #eceef0; }
-.calendar-absence-pending { opacity: 0.75; border: 1px dashed currentColor; background: transparent; }
 .work-order-accept-panel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid #dce9dc; border-radius: 8px; color: #526454; background: #f4f8f2; font-size: 11px; }
 .absence-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .profile-form { max-width: 650px; }

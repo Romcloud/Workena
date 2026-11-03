@@ -324,9 +324,6 @@ export function App() {
   const [expandedDashboardOrderId, setExpandedDashboardOrderId] = useState<string | null>(null);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [selectedCalendarOrder, setSelectedCalendarOrder] = useState<WorkOrder | null>(null);
-  const [selectedCalendarAttendance, setSelectedCalendarAttendance] = useState<AttendanceShift | null>(null);
-  const [selectedCalendarAbsence, setSelectedCalendarAbsence] = useState<AbsenceRequest | null>(null);
-  const [calendarShifts, setCalendarShifts] = useState<AttendanceShift[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
   const [showLunchBreakPrompt, setShowLunchBreakPrompt] = useState(false);
@@ -524,6 +521,23 @@ export function App() {
 
     let alive = true;
     void (async () => {
+      const invitationId = new URLSearchParams(window.location.search).get("invite");
+      if (invitationId) {
+        const { data: invitedCompanyId, error: invitationError } = await client.rpc("claim_company_invitation", {
+          p_invitation_id: invitationId,
+        });
+        if (!alive) return;
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.delete("invite");
+        window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+        if (invitationError) {
+          setError(invitationError.message);
+        } else if (invitedCompanyId) {
+          window.localStorage.setItem("workena-company", invitedCompanyId);
+          setNotice("Pozvanie bolo prijaté. Ste členom firemného tímu.");
+        }
+      }
+
       const { data: memberRows, error: memberError } = await client
         .from("memberships")
         .select("id, company_id, user_id, email, full_name, role, is_employee, is_salesperson, is_external, is_minor, active, deactivated_at, created_at")
@@ -974,32 +988,6 @@ export function App() {
   useEffect(() => {
     void refreshAbsenceRequests().catch((reason: unknown) => setError(errorText(reason)));
   }, [refreshAbsenceRequests]);
-
-  useEffect(() => {
-    if (!client || !activeCompanyId) {
-      setCalendarShifts([]);
-      return;
-    }
-    let alive = true;
-    const start = new Date(`${workOrderMonth}-01T00:00:00`);
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-    void client.from("attendance_shifts")
-      .select("id, company_id, user_id, started_at, ended_at, source_work_entry_id, note")
-      .eq("company_id", activeCompanyId)
-      .gte("started_at", start.toISOString())
-      .lt("started_at", end.toISOString())
-      .order("started_at")
-      .then(({ data, error: shiftsError }) => {
-        if (!alive) return;
-        if (shiftsError) {
-          setError(shiftsError.message);
-          return;
-        }
-        setCalendarShifts((data ?? []) as AttendanceShift[]);
-      });
-    return () => { alive = false; };
-  }, [activeCompanyId, client, workOrderMonth]);
 
   useEffect(() => {
     if (!canAccessCustomers) {
@@ -1463,22 +1451,44 @@ export function App() {
         : "ACCOUNTANT";
     setBusy(true);
     setError("");
-    const { error: addError } = await client.rpc("add_company_member", {
-      p_company_id: activeCompanyId,
-      p_email: String(form.get("email") ?? ""),
-      p_role: role,
-      p_is_employee: isEmployee,
-      p_is_external: isExternal,
-      p_is_minor: isEmployee && !isExternal && form.get("is_minor") === "on",
-    });
-    if (addError) setError(addError.message);
-    else {
+    setNotice("");
+    try {
+      const { data: result, error: addError } = await client.rpc("add_or_invite_company_member", {
+        p_company_id: activeCompanyId,
+        p_email: String(form.get("email") ?? ""),
+        p_full_name: String(form.get("full_name") ?? ""),
+        p_role: role,
+        p_is_employee: isEmployee,
+        p_is_external: isExternal,
+        p_is_minor: isEmployee && !isExternal && form.get("is_minor") === "on",
+      });
+      if (addError) throw addError;
+
+      if (result?.status === "invited") {
+        const { error: emailError } = await client.functions.invoke("send-email", {
+          body: {
+            template: "company_invitation",
+            to: "",
+            data: { invitationId: result.invitation_id },
+          },
+        });
+        if (emailError) {
+          setError(emailError.message);
+          setNotice("Pozvanie je uložené, ale e-mail sa nepodarilo odoslať. Skúste ho odoslať znova.");
+          return;
+        }
+        setNotice(`Pozvánka bola odoslaná na ${String(form.get("email") ?? "")}. Po prihlásení sa člen automaticky pridá do firmy.`);
+      } else {
+        setNotice("Člen bol pridaný do firemného priestoru.");
+      }
       formElement.reset();
       setNewMemberType("EMPLOYEE");
       await refreshWorkspace();
-      setNotice("Člen bol pridaný do firemného priestoru.");
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   const removeMember = async (membership: Membership) => {
@@ -3309,6 +3319,44 @@ export function App() {
       };
       return getAssignmentDate(left).localeCompare(getAssignmentDate(right));
     });
+    const calendarOrders = workOrders.flatMap((order) => {
+      if (order.status === "DONE") return [];
+      const assignments = order.assignees ?? [];
+      const assigneeIds = assignments.length
+        ? assignments
+          .filter((assignment) => !assignment.declined_at && !assignment.reassigned_at)
+          .map((assignment) => assignment.user_id)
+        : [order.assignee_id];
+      return [...new Set(assigneeIds)]
+        .filter((userId) => isCompanyOwner || userId === session?.user.id)
+        .map((userId) => ({
+          order,
+          userId,
+          member: roster.find((person) => person.user_id === userId),
+        }));
+    });
+    const getCalendarEmployeeColor = (userId: string) => {
+      const rosterIndex = roster.findIndex((member) => member.user_id === userId);
+      const stableIndex = rosterIndex >= 0
+        ? rosterIndex
+        : [...userId].reduce((total, character) => total + character.charCodeAt(0), 0);
+      const hue = (stableIndex * 137.508 + 24) % 360;
+      return {
+        backgroundColor: `hsl(${hue} 70% 92%)`,
+        borderLeft: `3px solid hsl(${hue} 55% 48%)`,
+        color: `hsl(${hue} 45% 28%)`,
+      };
+    };
+    const calendarEmployees = [...new Set(
+      calendarOrders
+        .filter(({ order }) => order.due_date.startsWith(workOrderMonth))
+        .map(({ userId }) => userId),
+    )]
+      .map((userId) => ({
+        userId,
+        member: roster.find((person) => person.user_id === userId),
+      }))
+      .filter((employee) => employee.member);
     const calendarMonthStart = new Date(`${workOrderMonth}-01T12:00:00`);
     const calendarOffset = (calendarMonthStart.getDay() + 6) % 7;
     const calendarDayCount = new Date(calendarMonthStart.getFullYear(), calendarMonthStart.getMonth() + 1, 0).getDate();
@@ -3368,7 +3416,7 @@ export function App() {
         </div>}
         <section className="records-section">
           <div className="section-title-row">
-            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Termíny všetkých zákaziek v mesiaci.</p></div>
+            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky s termínom v mesiaci.</p></div>
             <div className="calendar-heading-actions">
               <button className="button button-outline button-small" onClick={() => setCalendarExpanded((expanded) => !expanded)}>{calendarExpanded ? "Zmenšiť kalendár" : "Roztiahnuť kalendár"}</button>
               <div className="attendance-month-switch">
@@ -3386,37 +3434,24 @@ export function App() {
               </div>
             </div>
           </div>
+          {isCompanyOwner && calendarEmployees.length > 0 && <div className="calendar-legend" aria-label="Farby zákaziek podľa zamestnanca">
+            {calendarEmployees.map(({ userId, member }) => <span className="calendar-legend-item" key={userId}>
+              <i style={getCalendarEmployeeColor(userId)} />
+              {member?.full_name || member?.email}
+            </span>)}
+          </div>}
           <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
-              const dayOrders = day ? workOrders.filter((order) => order.due_date === day) : [];
-              const dayShifts = day ? calendarShifts.filter((shift) => localDateKey(shift.started_at) === day) : [];
-              const dayAbsences = day
-                ? absenceRequests.filter((request) => (request.status === "PENDING" || request.status === "APPROVED") && absenceDatesOverlapDay(request, day))
-                : [];
+              const dayOrders = day ? calendarOrders.filter(({ order }) => order.due_date === day) : [];
               return <div className={`calendar-day ${day ? "" : "calendar-day-empty"}`} role="gridcell" key={`${day ?? "empty"}-${index}`}>
-                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayOrders.slice(0, 3).map((order) => <button
-                  className={`calendar-order calendar-order-${order.status.toLowerCase()}`}
-                  key={order.id}
-                  title={`${order.title} · ${workOrderStatusName(order.status)}`}
+                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayOrders.slice(0, 3).map(({ order, userId, member }) => <button
+                  className="calendar-order"
+                  style={getCalendarEmployeeColor(userId)}
+                  key={`${order.id}-${userId}`}
+                  title={`${member?.full_name || member?.email || "Zamestnanec"} · ${order.title} · ${workOrderStatusName(order.status)}`}
                   onClick={() => setSelectedCalendarOrder(order)}
-                >{order.time_to_arrange ? "Dohodnúť čas · " : order.starts_at ? `${order.starts_at.slice(0, 5)} · ` : ""}{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}
-                {dayShifts.slice(0, 2).map((shift) => {
-                  const member = roster.find((person) => person.user_id === shift.user_id);
-                  return <button className="calendar-attendance" key={shift.id} title={member?.full_name || member?.email || "Dochádzka"} onClick={() => setSelectedCalendarAttendance(shift)}>
-                    <Clock3 size={11} /> {timeLabel(shift.started_at)} · {member?.full_name || member?.email || "Dochádzka"}
-                  </button>;
-                })}
-                {dayShifts.length > 2 && <small>+{dayShifts.length - 2} dochádzky</small>}
-                {dayAbsences.slice(0, 2).map((request) => {
-                  const member = roster.find((person) => person.user_id === request.user_id);
-                  return <button
-                    className={`calendar-absence calendar-absence-${request.type.toLowerCase()} ${request.status === "PENDING" ? "calendar-absence-pending" : ""}`}
-                    key={request.id}
-                    title={`${ABSENCE_TYPE_LABELS[request.type]} · ${member?.full_name || member?.email || "Zamestnanec"} · ${absenceStatusName(request.status)}`}
-                    onClick={() => setSelectedCalendarAbsence(request)}
-                  >{ABSENCE_TYPE_LABELS[request.type]}{request.status === "PENDING" ? " (čaká)" : ""}</button>;
-                })}{dayAbsences.length > 2 && <small>+{dayAbsences.length - 2} neprítomnosti</small>}</>}
+                >{order.time_to_arrange ? "Dohodnúť čas · " : order.starts_at ? `${order.starts_at.slice(0, 5)} · ` : ""}{isCompanyOwner ? `${member?.full_name || member?.email || "Zamestnanec"} · ` : ""}{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}</>}
               </div>;
             })}
           </div>
@@ -3588,36 +3623,6 @@ export function App() {
             setSelectedCalendarOrder(null);
             window.setTimeout(() => document.getElementById(`work-order-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
           }}>Otvoriť zákazku</button></div>
-        </section>
-      </div>}
-      {selectedCalendarAttendance && <div className="modal-backdrop" onMouseDown={(event) => {
-        if (event.target === event.currentTarget) setSelectedCalendarAttendance(null);
-      }}>
-        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-attendance-title">
-          <div className="modal-heading"><div><span className="eyebrow">DOCHÁDZKA</span><h2 id="calendar-attendance-title">{roster.find((member) => member.user_id === selectedCalendarAttendance.user_id)?.full_name || "Pracovná zmena"}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedCalendarAttendance(null)}><X size={18} /></button></div>
-          <p><CalendarDays size={15} /> {dateLabel(selectedCalendarAttendance.started_at)}</p>
-          <p><Clock3 size={15} /> {timeLabel(selectedCalendarAttendance.started_at)} – {selectedCalendarAttendance.ended_at ? timeLabel(selectedCalendarAttendance.ended_at) : "Prebieha"}</p>
-          {selectedCalendarAttendance.note && <p>{selectedCalendarAttendance.note}</p>}
-          <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarAttendance(null)}>Zavrieť</button><button className="button button-primary button-small" onClick={() => {
-            setAttendanceMonth(workOrderMonth);
-            setSelectedCalendarAttendance(null);
-            setPage("attendance");
-          }}>Otvoriť dochádzku</button></div>
-        </section>
-      </div>}
-      {selectedCalendarAbsence && <div className="modal-backdrop" onMouseDown={(event) => {
-        if (event.target === event.currentTarget) setSelectedCalendarAbsence(null);
-      }}>
-        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-absence-title">
-          <div className="modal-heading"><div><span className="eyebrow">NEPRÍTOMNOSŤ</span><h2 id="calendar-absence-title">{ABSENCE_TYPE_LABELS[selectedCalendarAbsence.type]}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedCalendarAbsence(null)}><X size={18} /></button></div>
-          <p><Users size={15} /> {roster.find((member) => member.user_id === selectedCalendarAbsence.user_id)?.full_name || "Zamestnanec"} · {absenceStatusName(selectedCalendarAbsence.status)}</p>
-          <p><CalendarDays size={15} /> {dateLabel(`${selectedCalendarAbsence.start_date}T12:00:00`)} – {dateLabel(`${selectedCalendarAbsence.end_date}T12:00:00`)}</p>
-          {selectedCalendarAbsence.note && <p>{selectedCalendarAbsence.note}</p>}
-          <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarAbsence(null)}>Zavrieť</button><button className="button button-primary button-small" onClick={() => {
-            setAttendanceMonth(selectedCalendarAbsence.start_date.slice(0, 7));
-            setSelectedCalendarAbsence(null);
-            setPage("attendance");
-          }}>Otvoriť dochádzku</button></div>
         </section>
       </div>}
       </section>
@@ -4041,9 +4046,10 @@ export function App() {
           </div>)}</div>
         </section>
         {isManager && <section className="panel invite-panel">
-          <div className="panel-heading"><div><h2><Plus size={17} /> Pridať člena</h2><p>Člen musí mať aspoň raz vytvorený účet cez Google.</p></div></div>
+          <div className="panel-heading"><div><h2><Plus size={17} /> Pridať člena</h2><p>Existujúci účet pridáme hneď, novému používateľovi pošleme pozvánku e-mailom.</p></div></div>
           <form className="invite-form" onSubmit={(event) => void addMember(event)}>
-            <label className="field"><span>E-mail Google účtu</span><input type="email" name="email" autoComplete="email" placeholder="meno@firma.sk" required /></label>
+            <label className="field"><span>Meno a priezvisko</span><input type="text" name="full_name" autoComplete="name" minLength={1} maxLength={120} placeholder="Jana Nováková" required /></label>
+            <label className="field"><span>E-mail</span><input type="email" name="email" autoComplete="email" maxLength={320} placeholder="meno@firma.sk" required /></label>
             <label className="field"><span>Typ člena</span><select name="member_type" value={newMemberType} onChange={(event) => setNewMemberType(event.target.value)}>
               <option value="EMPLOYEE">Zamestnanec</option>
               <option value="EXTERNAL_EMPLOYEE">Zamestnanec externý</option>
