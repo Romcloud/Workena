@@ -201,10 +201,6 @@ function absenceStatusName(status: AbsenceStatus) {
   return status === "APPROVED" ? "Schválené" : status === "REJECTED" ? "Zamietnuté" : status === "CANCELLED" ? "Zrušené" : "Čaká na schválenie";
 }
 
-function absenceDatesOverlapDay(request: AbsenceRequest, day: string) {
-  return request.start_date <= day && request.end_date >= day;
-}
-
 function csvCell(value: string | number | null | undefined) {
   let text = value === null || value === undefined ? "" : String(value);
   if (/^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
