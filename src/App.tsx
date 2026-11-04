@@ -92,6 +92,26 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Požiadavku sa nepodarilo dokončiť. Skúste to znova.";
 }
 
+async function functionErrorText(error: unknown) {
+  if (error instanceof Error && "context" in error && error.context instanceof Response) {
+    const responseText = await error.context.clone().text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      return responseText || error.message;
+    }
+    if (typeof payload !== "object" || payload === null) return responseText || error.message;
+    const body = payload as { error?: unknown; failures?: unknown };
+    const message = typeof body.error === "string" ? body.error : error.message;
+    const failures = Array.isArray(body.failures)
+      ? body.failures.filter((failure): failure is string => typeof failure === "string")
+      : [];
+    return failures.length ? `${message} ${failures.join("; ")}` : message;
+  }
+  return errorText(error);
+}
+
 type EmailTemplate = "company_welcome" | "company_join_request" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 async function sendTransactionalEmail(
@@ -456,7 +476,7 @@ export function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (!client || !session || !activeCompanyId || !isCompanyOwner || params.get("google_calendar") !== "connect") return;
+    if (!client || !session || !activeCompanyId || !activeMembership?.active || params.get("google_calendar") !== "connect") return;
     if (!session.provider_token || !session.provider_refresh_token) {
       setGoogleCalendarMessage("Google neposkytol obnovovací token. Skúste pripojenie zopakovať a potvrďte požadované prístupy.");
       return;
@@ -471,13 +491,13 @@ export function App() {
         accessToken: session.provider_token,
         refreshToken: session.provider_refresh_token,
       },
-    }).then(({ data, error: connectionError }) => {
+    }).then(async ({ data, error: connectionError }) => {
       if (!alive) return;
       const currentUrl = new URL(window.location.href);
       currentUrl.searchParams.delete("google_calendar");
       window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
       if (connectionError) {
-        setGoogleCalendarMessage(connectionError.message);
+        setGoogleCalendarMessage(await functionErrorText(connectionError));
         return;
       }
       if (!data?.connected) {
@@ -490,10 +510,10 @@ export function App() {
       if (alive) setGoogleCalendarBusy(false);
     });
     return () => { alive = false; };
-  }, [activeCompanyId, client, isCompanyOwner, session]);
+  }, [activeCompanyId, activeMembership?.active, client, session]);
 
   useEffect(() => {
-    if (!client || !session || !activeCompanyId || !isCompanyOwner) {
+    if (!client || !session || !activeCompanyId || !activeMembership?.active) {
       setGoogleCalendarConnected(false);
       setGoogleCalendarLastSync("");
       return;
@@ -503,17 +523,17 @@ export function App() {
     let alive = true;
     void client.functions.invoke<{ connected: boolean; lastSyncAt?: string | null }>("google-calendar", {
       body: { action: "status", companyId: activeCompanyId },
-    }).then(({ data, error: statusError }) => {
+    }).then(async ({ data, error: statusError }) => {
       if (!alive) return;
       if (statusError) {
-        setGoogleCalendarMessage(statusError.message);
+        setGoogleCalendarMessage(await functionErrorText(statusError));
         return;
       }
       setGoogleCalendarConnected(Boolean(data?.connected));
       setGoogleCalendarLastSync(data?.lastSyncAt ?? "");
     });
     return () => { alive = false; };
-  }, [activeCompanyId, client, isCompanyOwner, session]);
+  }, [activeCompanyId, activeMembership?.active, client, session]);
 
   useEffect(() => {
     if (activeCompanyId) window.localStorage.setItem("workena-company", activeCompanyId);
@@ -888,7 +908,7 @@ export function App() {
     const { data, error: syncError } = await client.functions.invoke<{ syncedAt?: string; skipped?: boolean }>("google-calendar", {
       body: { action: "sync", companyId: activeCompanyId },
     });
-    if (syncError) throw syncError;
+    if (syncError) throw new Error(await functionErrorText(syncError));
     if (data?.skipped) {
       setGoogleCalendarMessage("Synchronizácia už prebieha.");
       return;
@@ -900,7 +920,7 @@ export function App() {
   }, [activeCompanyId, client, refreshWorkOrders]);
 
   useEffect(() => {
-    if (!client || !session || !activeCompanyId || !isCompanyOwner || !googleCalendarConnected) return;
+    if (!client || !session || !activeCompanyId || !activeMembership?.active || !googleCalendarConnected) return;
     let alive = true;
     const syncCalendar = async () => {
       try {
@@ -920,7 +940,7 @@ export function App() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [activeCompanyId, client, googleCalendarConnected, isCompanyOwner, session, syncGoogleCalendarNow]);
+  }, [activeCompanyId, activeMembership?.active, client, googleCalendarConnected, session, syncGoogleCalendarNow]);
 
   const refreshWorkOrderPhotos = useCallback(async () => {
     if (!client || !activeCompanyId) return;
@@ -3545,10 +3565,10 @@ export function App() {
               </div>
             </div>
           </div>
-          {isCompanyOwner && <div className="calendar-google-sync">
+          {activeMembership?.active && <div className="calendar-google-sync">
             <div><strong>Google Kalendár</strong><small>{googleCalendarConnected
               ? `Prepojený${googleCalendarLastSync ? ` · synchronizované ${timeLabel(googleCalendarLastSync)}` : " · synchronizuje sa každú minútu"}`
-              : "Prepojte účet Google pre obojsmernú synchronizáciu zákaziek."}</small></div>
+              : "Prepojte svoj Google účet pre obojsmernú synchronizáciu priradených zákaziek."}</small></div>
             <div className="calendar-google-actions">
               {googleCalendarConnected && <button className="button button-outline button-small" disabled={googleCalendarBusy} onClick={() => {
                 setGoogleCalendarBusy(true);

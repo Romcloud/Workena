@@ -34,6 +34,7 @@ type WorkOrderRow = {
 type EventMapping = {
   work_order_id: string;
   company_id: string;
+  user_id: string;
   google_event_id: string;
   work_order_updated_at: string;
   google_updated_at: string;
@@ -227,7 +228,8 @@ async function refreshGoogleAccessToken(connection: Connection, adminClient: Ret
   const { error: saveError } = await adminClient
     .from("google_calendar_connections")
     .update({ access_token: tokenResult.access_token, access_token_expires_at: expiresAt, updated_at: new Date().toISOString() })
-    .eq("company_id", connection.company_id);
+    .eq("company_id", connection.company_id)
+    .eq("user_id", connection.user_id);
   if (saveError) throw saveError;
   return { ...connection, access_token: tokenResult.access_token, access_token_expires_at: expiresAt };
 }
@@ -236,16 +238,15 @@ async function syncCompanyCalendar(
   adminClient: ReturnType<typeof createClient>,
   originalConnection: Connection,
 ) {
-  const { data: activeOwner, error: ownerError } = await adminClient
+  const { data: activeMember, error: memberError } = await adminClient
     .from("memberships")
-    .select("user_id")
+    .select("user_id, role")
     .eq("company_id", originalConnection.company_id)
     .eq("user_id", originalConnection.user_id)
-    .eq("role", "OWNER")
     .eq("active", true)
     .maybeSingle();
-  if (ownerError) throw ownerError;
-  if (!activeOwner) throw new Error("Google Kalendár nie je pripojený aktívnym vlastníkom firmy.");
+  if (memberError) throw memberError;
+  if (!activeMember) return { connected: false, skipped: true };
 
   const lockToken = crypto.randomUUID();
   const lockTime = new Date().toISOString();
@@ -256,19 +257,21 @@ async function syncCompanyCalendar(
       sync_lock_token: lockToken,
     })
     .eq("company_id", originalConnection.company_id)
+    .eq("user_id", originalConnection.user_id)
     .or(`sync_lock_until.is.null,sync_lock_until.lt.${lockTime}`)
-    .select("company_id")
+    .select("company_id, user_id")
     .maybeSingle();
   if (lockError) throw lockError;
   if (!lock) return { connected: true, skipped: true };
 
   try {
-    return await syncCompanyCalendarLocked(adminClient, originalConnection);
+    return await syncCompanyCalendarLocked(adminClient, originalConnection, activeMember.role);
   } finally {
     const { error: unlockError } = await adminClient
       .from("google_calendar_connections")
       .update({ sync_lock_until: null, sync_lock_token: null })
       .eq("company_id", originalConnection.company_id)
+      .eq("user_id", originalConnection.user_id)
       .eq("sync_lock_token", lockToken);
     if (unlockError) throw unlockError;
   }
@@ -277,6 +280,7 @@ async function syncCompanyCalendar(
 async function syncCompanyCalendarLocked(
   adminClient: ReturnType<typeof createClient>,
   originalConnection: Connection,
+  memberRole: string,
 ) {
   let connection = originalConnection;
   if (new Date(connection.access_token_expires_at).getTime() < Date.now() + 120_000) {
@@ -288,13 +292,27 @@ async function syncCompanyCalendarLocked(
     .select("id, company_id, title, address, due_date, description, status, contact_phone, starts_at, ends_at, time_to_arrange, updated_at")
     .eq("company_id", connection.company_id);
   if (ordersError) throw ordersError;
-  const orders = (orderRows ?? []) as WorkOrderRow[];
+  let visibleOrderRows = orderRows ?? [];
+  if (memberRole !== "OWNER") {
+    const { data: assignmentRows, error: assignmentsError } = await adminClient
+      .from("work_order_assignees")
+      .select("work_order_id")
+      .eq("company_id", connection.company_id)
+      .eq("user_id", connection.user_id)
+      .is("declined_at", null)
+      .is("reassigned_at", null);
+    if (assignmentsError) throw assignmentsError;
+    const assignedOrderIds = new Set((assignmentRows ?? []).map((assignment) => assignment.work_order_id));
+    visibleOrderRows = visibleOrderRows.filter((order) => assignedOrderIds.has(order.id));
+  }
+  const orders = visibleOrderRows as WorkOrderRow[];
   const ordersById = new Map(orders.map((order) => [order.id, order]));
 
   const { data: mappingRows, error: mappingError } = await adminClient
     .from("google_work_order_events")
-    .select("work_order_id, company_id, google_event_id, work_order_updated_at, google_updated_at, google_deleted_at")
-    .eq("company_id", connection.company_id);
+    .select("work_order_id, company_id, user_id, google_event_id, work_order_updated_at, google_updated_at, google_deleted_at")
+    .eq("company_id", connection.company_id)
+    .eq("user_id", connection.user_id);
   if (mappingError) throw mappingError;
   const mappings = (mappingRows ?? []) as EventMapping[];
   const mappingByEvent = new Map(mappings.map((mapping) => [mapping.google_event_id, mapping]));
@@ -317,7 +335,9 @@ async function syncCompanyCalendarLocked(
       const { error: deletedError } = await adminClient
         .from("google_work_order_events")
         .update({ google_deleted_at: deletedAt, google_updated_at: deletedAt, updated_at: new Date().toISOString() })
-        .eq("work_order_id", order.id);
+        .eq("work_order_id", order.id)
+        .eq("company_id", connection.company_id)
+        .eq("user_id", connection.user_id);
       if (deletedError) throw deletedError;
       mapping.google_deleted_at = deletedAt;
       mapping.google_updated_at = deletedAt;
@@ -367,7 +387,9 @@ async function syncCompanyCalendarLocked(
         google_deleted_at: null,
         updated_at: new Date().toISOString(),
       })
-      .eq("work_order_id", order.id);
+      .eq("work_order_id", order.id)
+      .eq("company_id", connection.company_id)
+      .eq("user_id", connection.user_id);
     if (saveMappingError) throw saveMappingError;
     mapping.work_order_updated_at = order.updated_at;
     mapping.google_updated_at = event.updated ?? eventUpdatedAt;
@@ -390,7 +412,9 @@ async function syncCompanyCalendarLocked(
         const { error: deleteMappingError } = await adminClient
           .from("google_work_order_events")
           .delete()
-          .eq("work_order_id", order.id);
+          .eq("work_order_id", order.id)
+          .eq("company_id", connection.company_id)
+          .eq("user_id", connection.user_id);
         if (deleteMappingError) throw deleteMappingError;
         mappingByOrder.delete(order.id);
         removed++;
@@ -403,7 +427,9 @@ async function syncCompanyCalendarLocked(
         const { error: removeDeletedMappingError } = await adminClient
           .from("google_work_order_events")
           .delete()
-          .eq("work_order_id", order.id);
+          .eq("work_order_id", order.id)
+          .eq("company_id", connection.company_id)
+          .eq("user_id", connection.user_id);
         if (removeDeletedMappingError) throw removeDeletedMappingError;
         mappingByOrder.delete(order.id);
       } else {
@@ -420,6 +446,7 @@ async function syncCompanyCalendarLocked(
     const newMapping: EventMapping = {
       work_order_id: order.id,
       company_id: connection.company_id,
+      user_id: connection.user_id,
       google_event_id: createdEvent.id,
       work_order_updated_at: order.updated_at,
       google_updated_at: createdEvent.updated,
@@ -427,7 +454,7 @@ async function syncCompanyCalendarLocked(
     };
     const { error: insertMappingError } = await adminClient
       .from("google_work_order_events")
-      .upsert(newMapping);
+      .upsert(newMapping, { onConflict: "company_id,user_id,work_order_id" });
     if (insertMappingError) throw insertMappingError;
     mappingByOrder.set(order.id, newMapping);
     pushed++;
@@ -437,7 +464,8 @@ async function syncCompanyCalendarLocked(
   const { error: updateConnectionError } = await adminClient
     .from("google_calendar_connections")
     .update({ sync_token: syncToken ?? connection.sync_token, last_sync_at: syncedAt, updated_at: syncedAt })
-    .eq("company_id", connection.company_id);
+    .eq("company_id", connection.company_id)
+    .eq("user_id", connection.user_id);
   if (updateConnectionError) throw updateConnectionError;
   return { connected: true, syncedAt, pulled, pushed, removed };
 }
@@ -475,6 +503,7 @@ Deno.serve(async (req) => {
         try {
           await syncCompanyCalendar(adminClient, connection);
         } catch (reason) {
+          console.error("[google-calendar] scheduled sync failed", connection.company_id, connection.user_id, errorMessage(reason));
           failures.push(`${connection.company_id}: ${errorMessage(reason)}`);
         }
       }
@@ -497,16 +526,15 @@ Deno.serve(async (req) => {
       return json(400, { error: "Požiadavka nemá platnú akciu alebo firmu." });
     }
 
-    const { data: owner, error: ownerError } = await adminClient
+    const { data: activeMember, error: memberError } = await adminClient
       .from("memberships")
       .select("user_id")
       .eq("company_id", body.companyId)
       .eq("user_id", authData.user.id)
-      .eq("role", "OWNER")
       .eq("active", true)
       .maybeSingle();
-    if (ownerError) return json(500, { error: ownerError.message });
-    if (!owner) return json(403, { error: "Google Kalendár môže prepojiť iba aktívny vlastník firmy." });
+    if (memberError) return json(500, { error: memberError.message });
+    if (!activeMember) return json(403, { error: "Google Kalendár môže prepojiť iba aktívny člen firmy." });
 
     if (body.action === "connect") {
       if (!body.accessToken || !body.refreshToken) {
@@ -521,7 +549,7 @@ Deno.serve(async (req) => {
           refresh_token: body.refreshToken,
           access_token_expires_at: new Date(Date.now() + 3500_000).toISOString(),
           updated_at: new Date().toISOString(),
-        });
+        }, { onConflict: "company_id,user_id" });
       if (connectionError) return json(500, { error: connectionError.message });
       return json(200, { connected: true });
     }
@@ -541,6 +569,7 @@ Deno.serve(async (req) => {
     const result = await syncCompanyCalendar(adminClient, connection as Connection);
     return json(200, result);
   } catch (reason) {
+    console.error("[google-calendar] request failed", errorMessage(reason));
     return json(500, { error: errorMessage(reason) });
   }
 });
