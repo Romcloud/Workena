@@ -3666,6 +3666,7 @@ export function App() {
             </ol>
             <p className="muted">Ak ste webovú aplikáciu už nasadili, otvorte <strong>Nasadiť → Spravovať nasadenia → Upraviť</strong> (ceruzka), nastavte prístup na <strong>Všetci (Anyone)</strong>, zvoľte <strong>Nová verzia</strong> a znova kliknite na <strong>Nasadiť</strong>. Bez tohto nastavenia Google vráti chybu 401. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.</p>
             <p className="muted">Existujúce stĺpce „Dátum“, „Meno“, „Lokalita“, „Odkiaľ prišiel dopyt“, „Produkty“, dátum CP, kontakty, „Cca bez DPH“ a zaškrtávacie polia stavov sa rozpoznajú. Pomocné ID stĺpce pridá skript a skryje ich. „Poznámky“ zostanú v tabuľke zachované, ale nezobrazia sa vo Workene.</p>
+            <p className="muted">Prázdne bunky sa pri synchronizácii považujú za „bez zmeny“ a nevymažú existujúcu hodnotu na druhej strane. Ak chcete odstrániť zákazníka, vymažte celý riadok v tabuľke.</p>
             <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Zmeny a vymazania sa prenesú podľa času poslednej úpravy. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
             <div className="customer-sheets-setup">
               <button className="button button-outline button-small" disabled={googleSheetsBusy} onClick={() => void createGoogleSheetsScript()}>

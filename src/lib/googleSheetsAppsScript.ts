@@ -99,7 +99,7 @@ function isChecked(value) {
 function statusFromCells(cells, indexes) {
   if (indexes.status >= 0) {
     const value = String(cells[indexes.status] || "").trim().toLowerCase();
-    if (!value) return "NO_RESPONSE";
+    if (!value) return "";
     if (["approved", "schválená", "schvalena"].includes(value)) return "APPROVED";
     if (["rejected", "zamietnutá", "zamietnuta"].includes(value)) return "REJECTED";
     if (["no_response", "bez odpovede"].includes(value)) return "NO_RESPONSE";
@@ -111,7 +111,7 @@ function statusFromCells(cells, indexes) {
     indexes.no_response >= 0 && isChecked(cells[indexes.no_response]) ? "NO_RESPONSE" : "",
   ].filter(Boolean);
   if (checked.length > 1) throw new Error("V jednom riadku zaškrtnite iba jeden stav zákazníka.");
-  return checked[0] || "NO_RESPONSE";
+  return checked[0] || "";
 }
 
 function setupWorkena() {

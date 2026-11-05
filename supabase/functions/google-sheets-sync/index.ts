@@ -37,7 +37,8 @@ type CustomerRow = CustomerValues & {
   created_at: string;
   updated_at: string;
 };
-type SheetRow = CustomerValues & { id: string; updated_at: string };
+type SheetRow = Omit<CustomerValues, "status"> & { id: string; status: CustomerStatus | ""; updated_at: string };
+type PartialCustomerValues = Partial<CustomerValues>;
 type SnapshotEntry = { values: CustomerValues; updated_at: string };
 type Connection = {
   company_id: string;
@@ -103,18 +104,13 @@ function parseSheetRow(value: unknown): SheetRow | null {
     throw new Error(`Riadok tabuľky má neplatné ID „${idValue}“. Skryté ID neupravujte.`);
   }
   const hasData = customerFields.some((field) => String(row[field] ?? "").trim() !== "");
-  if (!idValue && !hasData) return null;
+  if (!hasData) return null;
 
   const fullName = String(row.full_name ?? "").trim();
   const location = String(row.location ?? "").trim();
   const leadSource = String(row.lead_source ?? "").trim();
   const product = String(row.product ?? "").trim();
   const contactDetails = String(row.contact_details ?? "").trim();
-  if (fullName.length < 2 || fullName.length > 160) throw new Error("Meno zákazníka musí mať 2 až 160 znakov.");
-  if (location.length < 2 || location.length > 250) throw new Error(`Zákazník ${fullName}: lokalita musí mať 2 až 250 znakov.`);
-  if (!leadSource || leadSource.length > 160) throw new Error(`Zákazník ${fullName}: zdroj dopytu je povinný (max. 160 znakov).`);
-  if (!product || product.length > 200) throw new Error(`Zákazník ${fullName}: produkt je povinný (max. 200 znakov).`);
-  if (contactDetails.length < 2 || contactDetails.length > 400) throw new Error(`Zákazník ${fullName}: kontakt musí mať 2 až 400 znakov.`);
 
   const priceValue = String(row.estimated_price ?? "").trim().replace(/\s/g, "").replace(",", ".");
   const estimatedPrice = priceValue ? Number(priceValue) : null;
@@ -126,9 +122,10 @@ function parseSheetRow(value: unknown): SheetRow | null {
   const timestamp = timestampValue && !Number.isNaN(Date.parse(timestampValue))
     ? new Date(Math.min(Date.parse(timestampValue), Date.now())).toISOString()
     : new Date().toISOString();
+  const rawStatus = String(row.status ?? "").trim();
   return {
     id: idValue,
-    customer_date: normalizedDate(row.customer_date) ?? "",
+    customer_date: normalizedDate(row.customer_date, true) ?? "",
     full_name: fullName,
     location,
     lead_source: leadSource,
@@ -136,7 +133,7 @@ function parseSheetRow(value: unknown): SheetRow | null {
     quote_sent_date: normalizedDate(row.quote_sent_date, true),
     contact_details: contactDetails,
     estimated_price: estimatedPrice,
-    status: parseStatus(row.status),
+    status: rawStatus ? parseStatus(rawStatus) : "",
     updated_at: timestamp,
   };
 }
@@ -167,12 +164,62 @@ function valuesEqual(left: CustomerValues, right: CustomerValues) {
   return customerFields.every((field) => left[field] === right[field]);
 }
 
-function rowChanged(row: { values: CustomerValues; updated_at: string }, snapshot: SnapshotEntry | undefined) {
-  return !snapshot || !valuesEqual(row.values, snapshot.values) || row.updated_at !== snapshot.updated_at;
+function partialValuesEqual(left: PartialCustomerValues, right: CustomerValues) {
+  return customerFields.every((field) => {
+    const value = left[field];
+    return isNonBlank(value) ? value === right[field] : !isNonBlank(right[field]);
+  });
 }
 
-function rowFromSheet(row: SheetRow): { values: CustomerValues; updated_at: string } {
-  return { values: {
+function isNonBlank<K extends keyof CustomerValues>(
+  value: PartialCustomerValues[K],
+): value is CustomerValues[K] {
+  return value !== undefined
+    && value !== null
+    && value !== ""
+    && !(typeof value === "string" && !value.trim());
+}
+
+function mergeCustomerValues(...sources: PartialCustomerValues[]): CustomerValues {
+  const defaults: CustomerValues = {
+    customer_date: "",
+    full_name: "",
+    location: "",
+    lead_source: "",
+    product: "",
+    quote_sent_date: null,
+    contact_details: "",
+    estimated_price: null,
+    status: "NO_RESPONSE",
+  };
+  const pick = <K extends keyof CustomerValues>(field: K): CustomerValues[K] => {
+    for (const source of sources) {
+      const value = source[field];
+      if (isNonBlank<K>(value)) return value;
+    }
+    return defaults[field];
+  };
+  return {
+    customer_date: pick("customer_date"),
+    full_name: pick("full_name"),
+    location: pick("location"),
+    lead_source: pick("lead_source"),
+    product: pick("product"),
+    quote_sent_date: pick("quote_sent_date"),
+    contact_details: pick("contact_details"),
+    estimated_price: pick("estimated_price"),
+    status: pick("status"),
+  };
+}
+
+function rowChanged(row: { values: PartialCustomerValues; updated_at: string }, snapshot: SnapshotEntry | undefined) {
+  return !snapshot
+    || customerFields.some((field) => isNonBlank(row.values[field]) && row.values[field] !== snapshot.values[field])
+    || row.updated_at !== snapshot.updated_at;
+}
+
+function rowFromSheet(row: SheetRow): { values: PartialCustomerValues; updated_at: string } {
+  const values: PartialCustomerValues = {
     customer_date: row.customer_date,
     full_name: row.full_name,
     location: row.location,
@@ -181,8 +228,24 @@ function rowFromSheet(row: SheetRow): { values: CustomerValues; updated_at: stri
     quote_sent_date: row.quote_sent_date,
     contact_details: row.contact_details,
     estimated_price: row.estimated_price,
-    status: row.status,
-  }, updated_at: row.updated_at };
+  };
+  if (row.status) values.status = row.status;
+  return { values, updated_at: row.updated_at };
+}
+
+function validateCustomerValues(values: CustomerValues) {
+  const fullName = values.full_name.trim();
+  const location = values.location.trim();
+  const leadSource = values.lead_source.trim();
+  const product = values.product.trim();
+  const contactDetails = values.contact_details.trim();
+  if (!values.customer_date.trim()) throw new Error("Dátum zákazníka je povinný.");
+  normalizedDate(values.customer_date);
+  if (fullName.length < 2 || fullName.length > 160) throw new Error("Meno zákazníka musí mať 2 až 160 znakov.");
+  if (location.length < 2 || location.length > 250) throw new Error(`Zákazník ${fullName}: lokalita musí mať 2 až 250 znakov.`);
+  if (!leadSource || leadSource.length > 160) throw new Error(`Zákazník ${fullName}: zdroj dopytu je povinný (max. 160 znakov).`);
+  if (!product || product.length > 200) throw new Error(`Zákazník ${fullName}: produkt je povinný (max. 200 znakov).`);
+  if (contactDetails.length < 2 || contactDetails.length > 400) throw new Error(`Zákazník ${fullName}: kontakt musí mať 2 až 400 znakov.`);
 }
 
 function makeSharedSecret() {
@@ -280,14 +343,22 @@ async function performSync(
       const sheetRow = sheetById.get(id);
       const previous = snapshot[id];
       if (!previous) {
-        if (dbRow && sheetRow) {
-          const dbEntry = entryFromCustomer(dbRow);
-          const sheetEntry = rowFromSheet(sheetRow);
-          finalRows.set(id, Date.parse(dbEntry.updated_at) >= Date.parse(sheetEntry.updated_at) ? dbEntry : sheetEntry);
-        } else if (dbRow) {
-          finalRows.set(id, entryFromCustomer(dbRow));
-        } else if (sheetRow) {
-          finalRows.set(id, rowFromSheet(sheetRow));
+        const dbEntry = dbRow ? entryFromCustomer(dbRow) : null;
+        const sheetEntry = sheetRow ? rowFromSheet(sheetRow) : null;
+        if (dbEntry && sheetEntry) {
+          const preferred = Date.parse(dbEntry.updated_at) >= Date.parse(sheetEntry.updated_at) ? dbEntry : sheetEntry;
+          const fallback = preferred === dbEntry ? sheetEntry : dbEntry;
+          finalRows.set(id, {
+            values: mergeCustomerValues(preferred.values, fallback.values),
+            updated_at: preferred.updated_at,
+          });
+        } else if (dbEntry) {
+          finalRows.set(id, dbEntry);
+        } else if (sheetEntry) {
+          finalRows.set(id, {
+            values: mergeCustomerValues(sheetEntry.values),
+            updated_at: sheetEntry.updated_at,
+          });
         }
         acknowledgedDeletedIds.push(id);
         continue;
@@ -298,20 +369,24 @@ async function performSync(
         const sheetEntry = rowFromSheet(sheetRow);
         const dbChanged = rowChanged(dbEntry, previous);
         const sheetChanged = rowChanged(sheetEntry, previous);
-        if (dbChanged && sheetChanged) {
-          finalRows.set(id, Date.parse(dbEntry.updated_at) >= Date.parse(sheetEntry.updated_at) ? dbEntry : sheetEntry);
-        } else if (sheetChanged) {
-          finalRows.set(id, sheetEntry);
-        } else {
-          finalRows.set(id, dbEntry);
-        }
+        const preferred = dbChanged && sheetChanged
+          ? Date.parse(dbEntry.updated_at) >= Date.parse(sheetEntry.updated_at) ? dbEntry : sheetEntry
+          : sheetChanged ? sheetEntry : dbEntry;
+        const fallback = preferred === dbEntry ? sheetEntry : dbEntry;
+        finalRows.set(id, {
+          values: mergeCustomerValues(preferred.values, fallback.values, previous.values),
+          updated_at: preferred.updated_at,
+        });
       } else if (!dbRow && sheetRow) {
         const dbDeletion = dbDeletedAt.get(id);
         const sheetEntry = rowFromSheet(sheetRow);
         if (dbDeletion && Date.parse(dbDeletion) >= Date.parse(sheetEntry.updated_at)) {
           acknowledgedDeletedIds.push(id);
         } else {
-          finalRows.set(id, sheetEntry);
+          finalRows.set(id, {
+            values: mergeCustomerValues(sheetEntry.values, previous.values),
+            updated_at: sheetEntry.updated_at,
+          });
         }
       } else if (dbRow && !sheetRow) {
         const sheetDeletion = sheetDeletedAt[id];
@@ -342,6 +417,7 @@ async function performSync(
     const sheetDeleteIds: string[] = [];
 
     for (const [id, merged] of finalRows) {
+      validateCustomerValues(merged.values);
       const existing = dbById.get(id);
       const sheetRow = sheetById.get(id);
       if (!existing) {
@@ -364,7 +440,7 @@ async function performSync(
         updatedInWorkena++;
       }
 
-      if (!sheetRow || !valuesEqual(rowFromSheet(sheetRow).values, merged.values) || sheetRow.updated_at !== merged.updated_at) {
+      if (!sheetRow || !partialValuesEqual(rowFromSheet(sheetRow).values, merged.values) || sheetRow.updated_at !== merged.updated_at) {
         if (sheetRow) updatedInSheet++;
         else createdInSheet++;
       }
