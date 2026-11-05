@@ -264,8 +264,18 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedCustomerR
       if (customerColumns.some((column) => hasValue(data[index][column]))) existingCustomerIds.add(id);
     }
   }
-  if (expectedIds.length !== existingCustomerIds.size || expectedIds.some((id) => !existingCustomerIds.has(String(id)))) {
-    throw new Error("Tabuľka sa počas synchronizácie zmenila (počet alebo ID zákazníckych riadkov nesúhlasí). Údaje neboli prepísané; spustite synchronizáciu znova.");
+  const expectedIdSet = new Set(expectedIds.map(String));
+  const missingIds = expectedIds.filter((id) => !existingCustomerIds.has(String(id)));
+  const unexpectedIds = Array.from(existingCustomerIds).filter((id) => !expectedIdSet.has(id));
+  if (missingIds.length || unexpectedIds.length) {
+    const formatIds = (ids) => ids.slice(0, 3).join(", ") + (ids.length > 3 ? ", …" : "");
+    const details = [
+      missingIds.length ? "chýbajúce ID: " + formatIds(missingIds) : "",
+      unexpectedIds.length ? "neočakávané ID: " + formatIds(unexpectedIds) : "",
+    ].filter(Boolean).join("; ");
+    throw new Error("Tabuľka sa počas synchronizácie zmenila. Workena načítala " + expectedIdSet.size
+      + " riadkov, ale pri zápise našla " + existingCustomerIds.size + ". " + details
+      + " Údaje neboli prepísané; spustite synchronizáciu znova.");
   }
   if (expectedIds.length !== Object.keys(expectedCustomerRowsById).length || expectedIds.some((id) => !expectedCustomerRowsById[id])) {
     throw new Error("Apps Script nemá aktuálny kód na bezpečné porovnanie riadkov. Skopírujte nový skript z Workeny a nasaďte novú verziu.");
