@@ -3470,12 +3470,12 @@ export function App() {
       <header className="dashboard-title-row">
         <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
         <div className="attendance-title-actions">
-          <button className="button button-primary" onClick={() => { setShowAbsenceForm(true); setPendingAbsenceAttachment(null); setError(""); setNotice(""); }}>
-            <Palmtree size={15} /> Nahlásiť neprítomnosť
-          </button>
           {isEmployeeUser && <button className="button button-outline" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); }}>
             <Plus size={15} /> Nový záznam
           </button>}
+          <button className="button button-outline" onClick={() => { setShowAbsenceForm(true); setPendingAbsenceAttachment(null); setError(""); setNotice(""); }}>
+            <Palmtree size={15} /> Nahlásiť neprítomnosť
+          </button>
         </div>
       </header>
       {canManageAttendance && <section className="panel">
