@@ -2104,9 +2104,32 @@ export function App() {
         : await client.from("customers").insert(payload).select("id").single();
       if (customerError) throw customerError;
       await refreshCustomers();
+      let sheetSyncFailed = false;
+      if (!editingCustomer && salespersonId === session?.user.id && googleSheetsConnection?.connected) {
+        setGoogleSheetsBusy(true);
+        try {
+          const { data: syncData, error: syncError } = await client.functions.invoke<{ syncedAt: string }>(
+            "google-sheets-sync",
+            { body: { action: "sync", companyId: activeCompanyId } },
+          );
+          if (syncError) throw new Error(await functionErrorText(syncError));
+          if (!syncData?.syncedAt) throw new Error("Synchronizácia nevrátila potvrdený výsledok.");
+          setGoogleSheetsConnection((current) => current ? { ...current, lastSyncAt: syncData.syncedAt } : current);
+          setGoogleSheetsError("");
+          setGoogleSheetsMessage("Nový zákazník bol automaticky pridaný aj do Google Tabuľky.");
+        } catch (reason: unknown) {
+          sheetSyncFailed = true;
+          setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
+          setGoogleSheetsMessage("");
+        } finally {
+          setGoogleSheetsBusy(false);
+        }
+      }
       setEditingCustomer(null);
       setShowCustomerForm(false);
-      setNotice(editingCustomer ? "Zákazník bol upravený." : "Zákazník bol pridaný.");
+      setNotice(sheetSyncFailed
+        ? "Zákazník bol pridaný do Workeny, ale synchronizácia s Google Tabuľkou zlyhala. Skúste ju spustiť tlačidlom Synchronizovať."
+        : editingCustomer ? "Zákazník bol upravený." : "Zákazník bol pridaný.");
       formElement.reset();
     } catch (reason: unknown) {
       setError(errorText(reason));

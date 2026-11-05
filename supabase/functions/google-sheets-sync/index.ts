@@ -114,9 +114,9 @@ function parseSheetRow(value: unknown): SheetRow | null {
 
   const fullName = String(row.full_name ?? "").trim();
   const location = String(row.location ?? "").trim();
-  const leadSource = String(row.lead_source ?? "").trim();
-  const product = String(row.product ?? "").trim();
-  const contactDetails = String(row.contact_details ?? "").trim();
+  const leadSource = String(row.lead_source ?? "").trim() || "Neuvedené";
+  const product = String(row.product ?? "").trim() || "Neuvedené";
+  const contactDetails = String(row.contact_details ?? "").trim() || "Neuvedené";
 
   const rawPrice = String(row.estimated_price ?? "").trim();
   const priceValue = rawPrice.replace(/\s/g, "").replace(",", ".");
@@ -132,7 +132,7 @@ function parseSheetRow(value: unknown): SheetRow | null {
   const rawStatus = String(row.status ?? "").trim();
   return {
     id: idValue,
-    customer_date: normalizedDate(row.customer_date, true) ?? "",
+    customer_date: normalizedDate(row.customer_date, true) ?? new Date().toISOString().slice(0, 10),
     full_name: fullName,
     location,
     lead_source: leadSource,
