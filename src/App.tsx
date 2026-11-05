@@ -361,6 +361,7 @@ export function App() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerOwnerId, setCustomerOwnerId] = useState("ALL");
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<string | null>(null);
   const [workOrderTab, setWorkOrderTab] = useState("SENT");
@@ -1481,7 +1482,7 @@ export function App() {
       await refreshAttendance();
       setEditingEntry(null);
       setPendingPhotos([]);
-      setPage("dashboard");
+      setShowEntryForm(false);
       if (photosError) {
         setError(`Záznam bol uložený, no fotografie sa nepodarilo úplne pridať: ${photosError}`);
       } else {
@@ -1930,6 +1931,7 @@ export function App() {
       if (customerError) throw customerError;
       await refreshCustomers();
       setEditingCustomer(null);
+      setShowCustomerForm(false);
       setNotice(editingCustomer ? "Zákazník bol upravený." : "Zákazník bol pridaný.");
       formElement.reset();
     } catch (reason: unknown) {
@@ -3229,16 +3231,19 @@ export function App() {
     );
   }
 
-  const renderAttendance = () => (
-    <section className="content-page">
-      <header className="dashboard-title-row">
-        <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
-        {isEmployeeUser && <button className="button button-outline" onClick={() => { setShowEntryForm((current) => !current); setEditingEntry(null); setPendingPhotos([]); }}>
-          <Plus size={15} /> {showEntryForm ? "Skryť formulár" : "Nový záznam"}
-        </button>}
-      </header>
-      {showEntryForm && <section className="panel form-panel form-stack entry-form">
-        <header className="page-heading"><span className="heading-icon"><ClipboardList size={20} /></span><div><span className="eyebrow">{editingEntry ? "ÚPRAVA ZÁZNAMU" : "NOVÝ ZÁZNAM"}</span><h2>{editingEntry ? "Upraviť odpracovaný čas" : "Zapísať odpracovaný čas"}</h2><p>Údaje sú viditeľné iba členom firmy {activeMembership?.company.name}.</p></div></header>
+  const renderEntryFormModal = () => showEntryForm && (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) {
+        setShowEntryForm(false);
+        setEditingEntry(null);
+        setPendingPhotos([]);
+      }
+    }}>
+      <section className="panel detail-modal work-order-create-modal entry-form" role="dialog" aria-modal="true" aria-labelledby="entry-form-title">
+        <div className="modal-heading">
+          <div><span className="eyebrow">{editingEntry ? "ÚPRAVA ZÁZNAMU" : "NOVÝ ZÁZNAM"}</span><h2 id="entry-form-title">{editingEntry ? "Upraviť odpracovaný čas" : "Zapísať odpracovaný čas"}</h2><p>Údaje sú viditeľné iba členom firmy {activeMembership?.company.name}.</p></div>
+          <button type="button" className="logout-button" aria-label="Zavrieť formulár" disabled={busy} onClick={() => { setShowEntryForm(false); setEditingEntry(null); setPendingPhotos([]); }}><X size={18} /></button>
+        </div>
         <form className="form-stack" onSubmit={(event) => void saveEntry(event)}>
           <div className="form-grid">
             <label className="field"><span>Dátum a čas práce</span><input type="datetime-local" name="worked_at" defaultValue={dateTimeLocal(editingEntry?.worked_at)} required /></label>
@@ -3253,9 +3258,20 @@ export function App() {
             {pendingPhotos.length > 0 && <ul className="pending-photo-list">{pendingPhotos.map((photo, index) => <li key={`${photo.name}-${photo.size}-${index}`}><span><Camera size={14} />{photo.name}</span><button type="button" aria-label={`Odstrániť ${photo.name}`} onClick={() => setPendingPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index))}><X size={15} /></button></li>)}</ul>}
           </section>
           {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="form-actions"><button type="button" className="button button-quiet" onClick={() => { setShowEntryForm(false); setEditingEntry(null); setPendingPhotos([]); }}>Zrušiť</button><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : editingEntry ? "Uložiť zmeny" : "Uložiť záznam"}</button></div>
+          <div className="form-actions"><button type="button" className="button button-quiet" disabled={busy} onClick={() => { setShowEntryForm(false); setEditingEntry(null); setPendingPhotos([]); }}>Zrušiť</button><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : editingEntry ? "Uložiť zmeny" : "Uložiť záznam"}</button></div>
         </form>
-      </section>}
+      </section>
+    </div>
+  );
+
+  const renderAttendance = () => (
+    <section className="content-page">
+      <header className="dashboard-title-row">
+        <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
+        {isEmployeeUser && <button className="button button-outline" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); }}>
+          <Plus size={15} /> Nový záznam
+        </button>}
+      </header>
       {canManageAttendance && <section className="panel">
         <label className="field"><span>Zobraziť dochádzku zamestnanca</span>
           <select value={attendanceEmployeeFilter} onChange={(event) => setAttendanceEmployeeFilter(event.target.value)}>
@@ -3443,6 +3459,7 @@ export function App() {
         <header className="dashboard-title-row">
           <div><span className="eyebrow">OBCHODNÁ EVIDENCIA</span><h1>Zákazníci</h1><p>Každý obchodník spravuje svoju databázu zákazníkov.</p></div>
           <div className="customer-export-actions">
+            <button className="button button-primary button-small" onClick={() => { setEditingCustomer(null); setError(""); setNotice(""); setShowCustomerForm(true); }}><Plus size={14} /> Nový zákazník</button>
             <button className="button button-outline button-small" onClick={downloadCustomersCsv}><Download size={14} /> Excel (CSV)</button>
             <button className="button button-outline button-small" onClick={printCustomers}><Printer size={14} /> Exportovať PDF</button>
           </div>
@@ -3451,8 +3468,15 @@ export function App() {
           <label className="field customer-search"><span>Vyhľadávanie</span><span className="search-input"><Search size={16} /><input type="search" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Meno, lokalita, produkt alebo kontakt" /></span></label>
           {isCompanyOwner && <label className="field"><span>Obchodník</span><select value={customerOwnerId} onChange={(event) => setCustomerOwnerId(event.target.value)}><option value="ALL">Všetci obchodníci</option>{salespeople.map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>}
         </section>
-        <section className="panel form-panel form-stack">
-          <div className="panel-heading"><div><h2><Plus size={17} /> {editingCustomer ? "Upraviť zákazníka" : "Pridať zákazníka"}</h2><p>Kontaktné a obchodné údaje sú viditeľné iba pridelenému obchodníkovi a vedeniu.</p></div></div>
+        {notice && <p className="invite-success" role="status">{notice}</p>}
+        {showCustomerForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !busy) {
+            setShowCustomerForm(false);
+            setEditingCustomer(null);
+          }
+        }}>
+        <section className="panel detail-modal work-order-create-modal" role="dialog" aria-modal="true" aria-labelledby="customer-form-title">
+          <div className="modal-heading"><div><span className="eyebrow">ZÁKAZNÍCI</span><h2 id="customer-form-title">{editingCustomer ? "Upraviť zákazníka" : "Pridať zákazníka"}</h2><p>Kontaktné a obchodné údaje sú viditeľné iba pridelenému obchodníkovi a vedeniu.</p></div><button type="button" className="logout-button" aria-label="Zavrieť formulár" disabled={busy} onClick={() => { setShowCustomerForm(false); setEditingCustomer(null); }}><X size={18} /></button></div>
           <form key={editingCustomer?.id ?? "new-customer"} className="form-stack" onSubmit={(event) => void saveCustomer(event)}>
             <div className="form-grid">
               <label className="field"><span>Dátum</span><input type="date" name="customer_date" defaultValue={editingCustomer?.customer_date ?? localDateKey(new Date())} required /></label>
@@ -3467,14 +3491,13 @@ export function App() {
               {isCompanyOwner && <label className="field"><span>Obchodník</span><select name="salesperson_id" defaultValue={editingCustomer?.salesperson_id ?? (activeMembership?.is_salesperson ? session?.user.id : salespeople[0]?.user_id)} required>{salespeople.map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>}
             </div>
             {error && <p className="form-error" role="alert">{error}</p>}
-            {notice && <p className="invite-success" role="status">{notice}</p>}
             <div className="form-actions">
-              {editingCustomer && <button type="button" className="button button-quiet" onClick={() => setEditingCustomer(null)}>Zrušiť úpravu</button>}
+              <button type="button" className="button button-quiet" disabled={busy} onClick={() => { setShowCustomerForm(false); setEditingCustomer(null); }}>Zrušiť</button>
               <button className="button button-primary" disabled={busy || salespeople.length === 0}>{busy ? "Ukladám…" : editingCustomer ? "Uložiť zmeny" : "Pridať zákazníka"}</button>
             </div>
             {salespeople.length === 0 && <p className="muted">Najskôr v časti Tím udeľte aspoň jednému členovi právo Obchodník.</p>}
           </form>
-        </section>
+        </section></div>}
         <section className="records-section">
           <div className="section-title-row"><div><h2><Users size={17} /> Databáza zákazníkov</h2><p>{visibleCustomers.length} záznamov</p></div></div>
           {visibleCustomers.length === 0
@@ -3487,7 +3510,7 @@ export function App() {
                   <td>{dateLabel(`${customer.customer_date}T12:00:00`)}</td><td><strong>{customer.full_name}</strong></td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ? dateLabel(`${customer.quote_sent_date}T12:00:00`) : "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "—" : `${hoursLabel(Number(customer.estimated_price))} €`}</td>
                   <td><select aria-label={`Stav zákazníka ${customer.full_name}`} value={customer.status} disabled={busy} onChange={(event) => void changeCustomerStatus(customer, event.target.value as CustomerStatus)}><option value="APPROVED">Schválená</option><option value="REJECTED">Zamietnutá</option><option value="NO_RESPONSE">Bez odpovede</option></select><small className={`customer-status customer-status-${customer.status.toLowerCase()}`}>{customerStatusName(customer.status)}</small></td>
                   {isCompanyOwner && <td>{salesperson?.full_name || salesperson?.email || "—"}</td>}
-                  <td><div className="customer-row-actions"><button className="button button-outline button-small" onClick={() => setEditingCustomer(customer)}><Pencil size={13} /> Upraviť</button><button className="button button-danger button-small" disabled={busy} onClick={() => void deleteCustomer(customer)}><Trash2 size={13} /> Vymazať</button></div></td>
+                  <td><div className="customer-row-actions"><button className="button button-outline button-small" onClick={() => { setEditingCustomer(customer); setError(""); setNotice(""); setShowCustomerForm(true); }}><Pencil size={13} /> Upraviť</button><button className="button button-danger button-small" disabled={busy} onClick={() => void deleteCustomer(customer)}><Trash2 size={13} /> Vymazať</button></div></td>
                 </tr>;
               })}</tbody>
             </table></div>}
@@ -4510,7 +4533,7 @@ export function App() {
             </section>
           ) : page === "attendance" ? renderAttendance() : page === "workOrders" ? renderWorkOrders() : page === "customers" && canAccessCustomers ? renderCustomers() : page === "trips" ? renderTrips() : page === "reports" && canManageAttendance ? renderReports() : page === "team" ? renderTeam() : page === "history" && isManager ? renderHistory() : page === "profile" ? renderProfile() : (
             <div className="content-page">
-              <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div>{isEmployeeUser && <button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); setPage("attendance"); }}><Plus size={16} /> Nový záznam</button>}</header>
+              <header className="dashboard-title-row"><div><span className="eyebrow">PREHĽAD PRÁCE</span><h1>Dobrý deň, {profileName.split(" ")[0]}</h1><p>Tu je prehľad práce vo firme {activeMembership.company.name}.</p></div>{isEmployeeUser && <button className="button button-primary" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); }}><Plus size={16} /> Nový záznam</button>}</header>
               {renderCompanyJoinRequests()}
               {isEmployeeUser && <section className={`panel attendance-clock attendance-clock-compact ${activeShift ? "attendance-clock-running" : ""}`}>
                 <div className="attendance-clock-copy">
@@ -4635,7 +4658,7 @@ export function App() {
               {error && <p className="form-error" role="alert">{error}</p>}
               <section className="records-section">
                 <div className="section-title-row"><div><h2><ClipboardList size={17} /> Pracovné záznamy</h2><p>{isManager ? "Záznamy dostupné členom tejto firmy." : "Vaše pracovné záznamy."}</p></div><span className="count-pill">{visibleEntries.length} záznamov</span></div>
-                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p>{isEmployeeUser && <button className="button button-primary button-small" onClick={() => { setShowEntryForm(true); setPage("attendance"); }}><Plus size={15} /> Nový záznam</button>}</div> : (
+                {visibleEntries.length === 0 ? <div className="panel empty-state"><span className="soft-icon"><ClipboardList size={19} /></span><strong>Zatiaľ tu nie sú žiadne záznamy</strong><p>Pridajte prvý pracovný záznam pre túto firmu.</p>{isEmployeeUser && <button className="button button-primary button-small" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); }}><Plus size={15} /> Nový záznam</button>}</div> : (
                   <div className="record-list">{visibleEntries.map((entry) => {
                     const author = roster.find((member) => member.user_id === entry.user_id);
                     return <article className="record-card" key={entry.id}>
@@ -4765,6 +4788,7 @@ export function App() {
         </table>
         <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>
       </section>}
+      {renderEntryFormModal()}
       {showLunchBreakPrompt && <div className="modal-backdrop" role="presentation">
         <section className="panel detail-modal lunch-break-prompt" role="dialog" aria-modal="true" aria-labelledby="lunch-break-title">
           <div className="modal-heading"><div><span className="eyebrow">UKONČENIE ZMENY</span><h2 id="lunch-break-title">Mali ste prestávku na obed?</h2></div></div>
@@ -4790,7 +4814,7 @@ export function App() {
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="detail-actions">
             {isManager && selectedEntry.status === "PENDING" && <><button className="button button-outline button-small" disabled={busy} onClick={() => void changeReview(selectedEntry, "REJECTED")}>Vrátiť na opravu</button><button className="button button-primary button-small" disabled={busy} onClick={() => void changeReview(selectedEntry, "APPROVED")}><CheckCircle2 size={15} /> Schváliť</button></>}
-            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-outline button-small" disabled={busy} onClick={() => { setEditingEntry(selectedEntry); setPendingPhotos([]); setSelectedId(null); setShowEntryForm(true); setPage("attendance"); setError(""); }}><Pencil size={14} /> Upraviť</button>}
+            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-outline button-small" disabled={busy} onClick={() => { setEditingEntry(selectedEntry); setPendingPhotos([]); setSelectedId(null); setShowEntryForm(true); setError(""); }}><Pencil size={14} /> Upraviť</button>}
             {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-danger button-small" disabled={busy} onClick={() => void removeEntry(selectedEntry)}><Trash2 size={14} /> Odstrániť</button>}
           </div>
         </section>
