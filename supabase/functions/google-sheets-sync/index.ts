@@ -502,7 +502,7 @@ async function performSync(
       action: "apply",
       rows: sheetWriteRows,
       deleteIds: sheetDeleteIds,
-      expectedUpdatedAtById: Object.fromEntries([...sheetById].map(([id, row]) => [id, row.updated_at])),
+      expectedCustomerRowsById: Object.fromEntries([...sheetById]),
       expectedIds: [...sheetById.keys()],
       acknowledgedDeletedIds: [...new Set([...acknowledgedDeletedIds, ...dbById.keys(), ...sheetById.keys()])],
     });
