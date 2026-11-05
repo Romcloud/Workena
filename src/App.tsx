@@ -366,6 +366,7 @@ export function App() {
   const [tripMapBusy, setTripMapBusy] = useState(false);
   const [tripNotice, setTripNotice] = useState("");
   const [showTripForm, setShowTripForm] = useState(false);
+  const [editingTrip, setEditingTrip] = useState<VehicleTrip | null>(null);
   const [tripStops, setTripStops] = useState<string[]>([]);
   const [tripReturnDestination, setTripReturnDestination] = useState("");
   const [tripDifferentReturn, setTripDifferentReturn] = useState(false);
@@ -3129,6 +3130,35 @@ export function App() {
     void attendanceAction("end_attendance");
   };
 
+  const resetVehicleTripForm = () => {
+    setEditingTrip(null);
+    setTripOrigin("");
+    setTripDestination("");
+    setTripRoundTrip(false);
+    setTripDistance("");
+    setTripMapDistance(null);
+    setTripDistanceSource("MANUAL");
+    setTripStops([]);
+    setTripReturnDestination("");
+    setTripDifferentReturn(false);
+  };
+
+  const openVehicleTripForm = (trip?: VehicleTrip) => {
+    setError("");
+    setTripNotice("");
+    setEditingTrip(trip ?? null);
+    setTripOrigin(trip?.origin ?? "");
+    setTripDestination(trip?.destination ?? "");
+    setTripRoundTrip(trip?.is_round_trip ?? false);
+    setTripDistance(trip ? String(trip.distance_km) : "");
+    setTripMapDistance(trip?.calculated_one_way_km ?? null);
+    setTripDistanceSource(trip?.distance_source ?? "MANUAL");
+    setTripStops(trip?.stops ?? []);
+    setTripReturnDestination(trip?.return_destination ?? "");
+    setTripDifferentReturn(Boolean(trip?.return_destination));
+    setShowTripForm(true);
+  };
+
   const calculateVehicleTripRoute = async () => {
     if (!tripOrigin.trim() || !tripDestination.trim()) {
       setError("Zadajte miesto odchodu aj cieľ jazdy.");
@@ -3169,7 +3199,6 @@ export function App() {
   const saveVehicleTrip = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client || !activeCompanyId) return;
-    const formElement = event.currentTarget;
     const form = new FormData(event.currentTarget);
     const distance = Number(tripDistance.replace(",", "."));
     if (!Number.isFinite(distance) || distance <= 0 || distance > 2000) {
@@ -3181,8 +3210,7 @@ export function App() {
     setTripNotice("");
     try {
       const validStops = tripStops.map((stop) => stop.trim()).filter((stop) => stop.length > 0);
-      const { error: saveError } = await client.rpc("create_vehicle_trip", {
-        p_company_id: activeCompanyId,
+      const tripValues = {
         p_work_order_id: String(form.get("work_order_id") ?? "") || null,
         p_trip_date: String(form.get("trip_date") ?? ""),
         p_origin: tripOrigin.trim(),
@@ -3194,24 +3222,39 @@ export function App() {
         p_note: String(form.get("note") ?? ""),
         p_stops: validStops,
         p_return_destination: tripRoundTrip && tripDifferentReturn && tripReturnDestination.trim() ? tripReturnDestination.trim() : null,
-      });
+      };
+      const { error: saveError } = editingTrip
+        ? await client.rpc("update_vehicle_trip", { p_trip_id: editingTrip.id, ...tripValues })
+        : await client.rpc("create_vehicle_trip", { p_company_id: activeCompanyId, ...tripValues });
       if (saveError) {
         setError(saveError.message);
         return;
       }
       await refreshVehicleTrips();
-      formElement.reset();
-      setTripOrigin("");
-      setTripDestination("");
-      setTripRoundTrip(false);
-      setTripDistance("");
-      setTripMapDistance(null);
-      setTripDistanceSource("MANUAL");
-      setTripStops([]);
-      setTripReturnDestination("");
-      setTripDifferentReturn(false);
-      setTripNotice("Jazda bola zaznamenaná.");
+      const wasEditing = Boolean(editingTrip);
+      resetVehicleTripForm();
+      setTripNotice(wasEditing ? "Záznam jazdy bol upravený." : "Jazda bola zaznamenaná.");
       setShowTripForm(false);
+    } catch (reason: unknown) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteVehicleTrip = async (trip: VehicleTrip) => {
+    if (!client || !window.confirm("Naozaj chcete vymazať tento záznam jazdy?")) return;
+    setBusy(true);
+    setError("");
+    setTripNotice("");
+    try {
+      const { error: deleteError } = await client.rpc("delete_vehicle_trip", { p_trip_id: trip.id });
+      if (deleteError) {
+        setError(deleteError.message);
+        return;
+      }
+      await refreshVehicleTrips();
+      setTripNotice("Záznam jazdy bol vymazaný.");
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -4346,18 +4389,18 @@ export function App() {
     <section className="content-page">
       <header className="dashboard-title-row">
         <div><span className="eyebrow">CESTOVNÝ VÝKAZ</span><h1>Výkaz jázd</h1><p>Vzdialenosť vypočítaná po cestách na Slovensku; kilometre možno upraviť ručne.</p></div>
-        <button className="button button-primary" onClick={() => { setError(""); setTripNotice(""); setShowTripForm(true); }}><Plus size={16} /> Zaznamenať jazdu</button>
+        <button className="button button-primary" onClick={() => openVehicleTripForm()}><Plus size={16} /> Zaznamenať jazdu</button>
       </header>
       {tripNotice && <p className="invite-success" role="status">{tripNotice}</p>}
       {showTripForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy && !tripMapBusy) setShowTripForm(false);
       }}>
       <section className="panel trip-create-panel work-order-create-modal" role="dialog" aria-modal="true" aria-labelledby="trip-form-title">
-        <div className="modal-heading"><div><span className="eyebrow">CESTOVNÝ VÝKAZ</span><h2 id="trip-form-title"><MapPin size={17} /> Zaznamenať jazdu</h2><p>Vypočítame cestnú vzdialenosť z miesta odchodu a cieľa.</p></div><button type="button" className="logout-button" aria-label="Zavrieť formulár jazdy" disabled={busy || tripMapBusy} onClick={() => setShowTripForm(false)}><X size={18} /></button></div>
-        <form className="form-stack trip-form" onSubmit={(event) => void saveVehicleTrip(event)}>
+        <div className="modal-heading"><div><span className="eyebrow">CESTOVNÝ VÝKAZ</span><h2 id="trip-form-title"><MapPin size={17} /> {editingTrip ? "Upraviť záznam jazdy" : "Zaznamenať jazdu"}</h2><p>Vypočítame cestnú vzdialenosť z miesta odchodu a cieľa.</p></div><button type="button" className="logout-button" aria-label="Zavrieť formulár jazdy" disabled={busy || tripMapBusy} onClick={() => setShowTripForm(false)}><X size={18} /></button></div>
+        <form key={editingTrip?.id ?? "new-trip"} className="form-stack trip-form" onSubmit={(event) => void saveVehicleTrip(event)}>
           <div className="form-grid">
-            <label className="field"><span>Dátum jazdy</span><input type="date" name="trip_date" defaultValue={localDateKey(new Date().toISOString())} required /></label>
-            <label className="field"><span>Priradiť k zákazke <small>voliteľné</small></span><select name="work_order_id" defaultValue="" onChange={(event) => {
+            <label className="field"><span>Dátum jazdy</span><input type="date" name="trip_date" defaultValue={editingTrip?.trip_date ?? localDateKey(new Date().toISOString())} required /></label>
+            <label className="field"><span>Priradiť k zákazke <small>voliteľné</small></span><select name="work_order_id" defaultValue={editingTrip?.work_order_id ?? ""} onChange={(event) => {
               const order = workOrders.find((item) => item.id === event.target.value);
               if (order) {
                 setTripDestination(order.address);
@@ -4429,11 +4472,11 @@ export function App() {
               setTripDistance(event.target.value);
               setTripDistanceSource(tripMapDistance === null ? "MANUAL" : "MAP_EDITED");
             }} placeholder="Vypočítajte alebo zadajte ručne" required /></label>
-            <label className="field"><span>Poznámka <small>voliteľné</small></span><input name="note" maxLength={2000} placeholder="Účel jazdy alebo doplňujúce informácie" /></label>
+            <label className="field"><span>Poznámka <small>voliteľné</small></span><input name="note" defaultValue={editingTrip?.note ?? ""} maxLength={2000} placeholder="Účel jazdy alebo doplňujúce informácie" /></label>
           </div>
           <p className="trip-map-notice">Pri výpočte odošleme zadané adresy službám OpenStreetMap Nominatim a OSRM na vyhľadanie miesta a cestnej trasy. Ak mapa zlyhá, kilometre možno zadať alebo opraviť ručne. Mapové údaje: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>.</p>
           {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="form-actions"><button type="button" className="button button-quiet" disabled={busy || tripMapBusy} onClick={() => setShowTripForm(false)}>Zrušiť</button><button className="button button-primary" disabled={busy || tripMapBusy}><Plus size={15} />{busy ? "Ukladám…" : "Uložiť jazdu"}</button></div>
+          <div className="form-actions"><button type="button" className="button button-quiet" disabled={busy || tripMapBusy} onClick={() => setShowTripForm(false)}>Zrušiť</button><button className="button button-primary" disabled={busy || tripMapBusy}>{editingTrip ? <Pencil size={15} /> : <Plus size={15} />}{busy ? "Ukladám…" : editingTrip ? "Uložiť zmeny" : "Uložiť jazdu"}</button></div>
         </form>
       </section>
       </div>}
@@ -4451,6 +4494,10 @@ export function App() {
               <p>{trip.origin} {trip.stops?.map((stop, index) => <span key={index}><ArrowRight size={14} /> {stop} </span>)}<ArrowRight size={14} /> {trip.destination}{trip.return_destination && <><ArrowRight size={14} /> {trip.return_destination}</>}</p>
               <div className="trip-card-footer"><span>{trip.is_round_trip ? "Spiatočná jazda" : "Jednosmerná jazda"} · {trip.distance_source === "MANUAL" ? "Zadané ručne" : trip.distance_source === "MAP_EDITED" ? "Mapa · ručne upravené" : "OpenStreetMap"}</span>{order && <span>{order.title}</span>}</div>
               {trip.note && <small>{trip.note}</small>}
+              {trip.user_id === session?.user.id && <div className="trip-card-actions">
+                <button className="button button-outline button-small" disabled={busy} onClick={() => openVehicleTripForm(trip)}><Pencil size={13} /> Upraviť</button>
+                <button className="button button-danger button-small" disabled={busy} onClick={() => void deleteVehicleTrip(trip)}><Trash2 size={13} /> Vymazať</button>
+              </div>}
             </article>;
           })}</div>}
       </section>

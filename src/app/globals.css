@@ -505,6 +505,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .trip-card > p { display: flex; align-items: center; gap: 7px; margin: 0; color: #596459; font-size: 11px; }
 .trip-card-footer, .trip-card > small { color: #8a9188; font-size: 9px; }
 .trip-card-footer span:last-child { text-align: right; }
+.trip-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .report-filter { display: grid; grid-template-columns: 1.5fr repeat(3, 1fr); align-items: end; gap: 15px; padding: 15px; }
 .report-filter > div { display: grid; gap: 4px; padding-bottom: 3px; }
 .report-filter > div small { color: #848c82; font-size: 9px; }
