@@ -80,10 +80,16 @@ function normalizedDate(value: unknown, optional = false) {
   let date = raw;
   const skDate = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(raw);
   if (skDate) date = `${skDate[3]}-${skDate[2].padStart(2, "0")}-${skDate[1].padStart(2, "0")}`;
+  const monthYear = /^(\d{1,2})\/(\d{2}|\d{4})$/.exec(raw);
+  if (monthYear) {
+    const month = Number(monthYear[1]);
+    const year = monthYear[2].length === 2 ? 2000 + Number(monthYear[2]) : Number(monthYear[2]);
+    if (month >= 1 && month <= 12) date = `${year}-${String(month).padStart(2, "0")}-01`;
+  }
   date = date.slice(0, 10);
   const parsedDate = new Date(`${date}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
-    throw new Error(`Neplatný dátum v riadku tabuľky: ${raw || "(prázdny)"}. Použite formát RRRR-MM-DD.`);
+    throw new Error(`Neplatný dátum v riadku tabuľky: ${raw || "(prázdny)"}. Použite formát RRRR-MM-DD, D.M.RRRR alebo M/RR.`);
   }
   return date;
 }
