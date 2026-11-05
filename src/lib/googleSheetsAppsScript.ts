@@ -237,18 +237,41 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedUpdatedAt
   });
   const rowsById = new Map(rows.map((customer) => [String(customer.id), customer]));
   const deleteSet = new Set(deleteIds.map(String));
+  const customerColumns = [
+    indexes.customer_date,
+    indexes.full_name,
+    indexes.location,
+    indexes.lead_source,
+    indexes.product,
+    indexes.quote_sent_date,
+    indexes.contact_details,
+    indexes.estimated_price,
+    indexes.status,
+    indexes.approved,
+    indexes.rejected,
+    indexes.no_response,
+  ].filter((column) => column >= 0);
+  const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";
   const nextRows = [];
+  let lastCustomerRowIndex = -1;
   for (let index = 1; index < data.length; index += 1) {
     const id = String(data[index][idColumn] || "").trim();
     if (!id) {
-      if (data[index].some((value) => value !== "")) nextRows.push(data[index]);
+      if (data[index].some(hasValue)) {
+        nextRows.push(data[index]);
+        if (customerColumns.some((column) => hasValue(data[index][column]))) {
+          lastCustomerRowIndex = nextRows.length - 1;
+        }
+      }
       continue;
     }
     if (deleteSet.has(id) || !rowsById.has(id)) continue;
     nextRows.push(valuesToCells(rowsById.get(id), headers, data[index]));
+    lastCustomerRowIndex = nextRows.length - 1;
     rowsById.delete(id);
   }
-  rowsById.forEach((customer) => nextRows.push(valuesToCells(customer, headers)));
+  const newRows = [...rowsById.values()].map((customer) => valuesToCells(customer, headers));
+  nextRows.splice(lastCustomerRowIndex + 1, 0, ...newRows);
   const result = [data[0], ...nextRows];
   sheet.getRange(1, 1, result.length, headers.length).setValues(result);
   if (data.length > result.length) sheet.getRange(result.length + 1, 1, data.length - result.length, headers.length).clearContent();
