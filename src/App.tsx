@@ -421,6 +421,7 @@ export function App() {
   const [googleSheetsWebAppUrl, setGoogleSheetsWebAppUrl] = useState("");
   const [googleSheetsSecret, setGoogleSheetsSecret] = useState("");
   const [googleSheetsError, setGoogleSheetsError] = useState("");
+  const [googleSheetsMessage, setGoogleSheetsMessage] = useState("");
   const [photos, setPhotos] = useState<PhotoView[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1224,10 +1225,12 @@ export function App() {
       setGoogleSheetsWebAppUrl("");
       setGoogleSheetsSecret("");
       setGoogleSheetsError("");
+      setGoogleSheetsMessage("");
       return;
     }
     let alive = true;
     setGoogleSheetsError("");
+    setGoogleSheetsMessage("");
     void client.functions.invoke<GoogleSheetsConnectionStatus>("google-sheets-sync", {
       body: { action: "status", companyId: activeCompanyId },
     }).then(async ({ data, error: statusError }) => {
@@ -1942,6 +1945,7 @@ export function App() {
     if (googleSheetsConnection?.configured && !window.confirm("Vytvorením nového kľúča prestane fungovať aktuálny skript, kým doň nevložíte nový kľúč a znovu ho nenasadíte. Pokračovať?")) return;
     setGoogleSheetsBusy(true);
     setGoogleSheetsError("");
+    setGoogleSheetsMessage("");
     setNotice("");
     try {
       const { data, error: createError } = await client.functions.invoke<{ secret?: string }>("google-sheets-sync", {
@@ -1979,6 +1983,7 @@ export function App() {
     if (!client || !activeCompanyId) return;
     setGoogleSheetsBusy(true);
     setGoogleSheetsError("");
+    setGoogleSheetsMessage("");
     setNotice("");
     try {
       const { data, error: configureError } = await client.functions.invoke<{ connected: boolean; webAppUrl?: string }>("google-sheets-sync", {
@@ -2004,6 +2009,7 @@ export function App() {
     if (!client || !activeCompanyId) return;
     setGoogleSheetsBusy(true);
     setGoogleSheetsError("");
+    setGoogleSheetsMessage("Synchronizácia prebieha…");
     setNotice("");
     try {
       const { data, error: syncError } = await client.functions.invoke<{
@@ -2019,11 +2025,12 @@ export function App() {
       if (!data?.syncedAt) throw new Error("Synchronizácia nevrátila potvrdený výsledok.");
       await refreshCustomers();
       setGoogleSheetsConnection((current) => current ? { ...current, connected: true, lastSyncAt: data.syncedAt } : current);
-      setNotice(
+      setGoogleSheetsMessage(
         `Synchronizácia dokončená. Nové z tabuľky: ${data.createdFromSheet}; nové v tabuľke: ${data.createdInSheet}; zmenené v Workene: ${data.updatedInWorkena}; zmenené v tabuľke: ${data.updatedInSheet}; vymazané v Workene: ${data.deletedInWorkena}; vymazané v tabuľke: ${data.deletedInSheet}.`,
       );
     } catch (reason: unknown) {
       setGoogleSheetsError(errorText(reason));
+      setGoogleSheetsMessage("");
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -2033,6 +2040,7 @@ export function App() {
     if (!client || !activeCompanyId || !window.confirm("Odpojiť Google Tabuľku? Ďalšie zmeny sa už nebudú synchronizovať.")) return;
     setGoogleSheetsBusy(true);
     setGoogleSheetsError("");
+    setGoogleSheetsMessage("");
     setNotice("");
     try {
       const { error: disconnectError } = await client.functions.invoke("google-sheets-sync", {
@@ -3637,6 +3645,7 @@ export function App() {
             </div>
           </div>
           {googleSheetsError && <p className="form-error" role="alert">{googleSheetsError}</p>}
+          {googleSheetsMessage && <p className="invite-success" role="status">{googleSheetsMessage}</p>}
           <details className="customer-sheets-guide" open={!googleSheetsConnection?.connected}>
             <summary>Návod na prepojenie Google Tabuľky</summary>
             <ol>
