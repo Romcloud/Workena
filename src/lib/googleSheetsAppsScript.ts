@@ -218,25 +218,6 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedUpdatedAt
   const indexes = headerMap(headers);
   const idColumn = indexes.id;
   const updatedColumn = indexes.updated_at;
-  const existingRows = new Map();
-  for (let index = 1; index < data.length; index += 1) {
-    const id = String(data[index][idColumn] || "").trim();
-    if (id) existingRows.set(id, index);
-  }
-  if (expectedIds.length !== existingRows.size || expectedIds.some((id) => !existingRows.has(String(id)))) {
-    throw new Error("Tabuľka sa počas synchronizácie zmenila. Údaje neboli prepísané; spustite synchronizáciu znova.");
-  }
-  Object.keys(expectedUpdatedAtById).forEach((id) => {
-    const rowIndex = existingRows.get(id);
-    if (rowIndex === undefined) throw new Error("Tabuľka sa počas synchronizácie zmenila (riadok bol odstránený). Skúste synchronizovať znova.");
-    const updatedAtValue = data[rowIndex][updatedColumn];
-    const actualUpdatedAt = updatedAtValue instanceof Date ? updatedAtValue.toISOString() : String(updatedAtValue || "");
-    if (actualUpdatedAt !== String(expectedUpdatedAtById[id] || "")) {
-      throw new Error("Tabuľka sa počas synchronizácie zmenila. Údaje neboli prepísané; spustite synchronizáciu znova.");
-    }
-  });
-  const rowsById = new Map(rows.map((customer) => [String(customer.id), customer]));
-  const deleteSet = new Set(deleteIds.map(String));
   const customerColumns = [
     indexes.customer_date,
     indexes.full_name,
@@ -252,6 +233,29 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedUpdatedAt
     indexes.no_response,
   ].filter((column) => column >= 0);
   const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";
+  const existingRows = new Map();
+  const existingCustomerIds = new Set();
+  for (let index = 1; index < data.length; index += 1) {
+    const id = String(data[index][idColumn] || "").trim();
+    if (id) {
+      existingRows.set(id, index);
+      if (customerColumns.some((column) => hasValue(data[index][column]))) existingCustomerIds.add(id);
+    }
+  }
+  if (expectedIds.length !== existingCustomerIds.size || expectedIds.some((id) => !existingCustomerIds.has(String(id)))) {
+    throw new Error("Tabuľka sa počas synchronizácie zmenila. Údaje neboli prepísané; spustite synchronizáciu znova.");
+  }
+  Object.keys(expectedUpdatedAtById).forEach((id) => {
+    const rowIndex = existingRows.get(id);
+    if (rowIndex === undefined) throw new Error("Tabuľka sa počas synchronizácie zmenila (riadok bol odstránený). Skúste synchronizovať znova.");
+    const updatedAtValue = data[rowIndex][updatedColumn];
+    const actualUpdatedAt = updatedAtValue instanceof Date ? updatedAtValue.toISOString() : String(updatedAtValue || "");
+    if (actualUpdatedAt !== String(expectedUpdatedAtById[id] || "")) {
+      throw new Error("Tabuľka sa počas synchronizácie zmenila. Údaje neboli prepísané; spustite synchronizáciu znova.");
+    }
+  });
+  const rowsById = new Map(rows.map((customer) => [String(customer.id), customer]));
+  const deleteSet = new Set(deleteIds.map(String));
   const nextRows = [];
   let lastCustomerRowIndex = -1;
   for (let index = 1; index < data.length; index += 1) {
