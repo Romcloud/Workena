@@ -186,6 +186,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .mobile-nav { display: none; }
 .content-page { display: grid; gap: 26px; }
 .dashboard-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.attendance-title-actions { display: flex; gap: 9px; }
 .dashboard-title-row h1, .page-heading h1 { margin: 6px 0 4px; font: 700 28px/1.3 var(--serif); letter-spacing: -1px; }
 .greeting-period { color: var(--green); }
 .dashboard-title-row p, .page-heading p { margin: 0; color: #858c83; font-size: 12px; }
@@ -705,6 +706,8 @@ button:disabled { opacity: .65; cursor: wait; }
   .dashboard-title-row h1 { font-size: 23px; }
   .dashboard-title-row p { max-width: 100%; }
   .dashboard-title-row > .button { min-height: 40px; padding: 0 14px; font-size: 11px; }
+  .attendance-title-actions { width: 100%; }
+  .attendance-title-actions .button { flex: 1; min-height: 40px; padding: 0 10px; font-size: 11px; }
   .stats-grid { gap: 8px; }
   .stat-card { min-height: 132px; padding: 12px 10px; }
   .stat-icon { width: 28px; height: 28px; }

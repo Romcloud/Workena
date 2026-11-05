@@ -407,6 +407,7 @@ export function App() {
   const [attendanceEmployeeFilter, setAttendanceEmployeeFilter] = useState("ALL");
   const [newMemberType, setNewMemberType] = useState("EMPLOYEE");
   const [pendingAbsenceAttachment, setPendingAbsenceAttachment] = useState<File | null>(null);
+  const [showAbsenceForm, setShowAbsenceForm] = useState(false);
   const [previewPlan, setPreviewPlan] = useState<PaymentPlan | "">("");
   const [gopayTestMessage, setGopayTestMessage] = useState("");
   const [newCompanyName, setNewCompanyName] = useState("");
@@ -2318,6 +2319,7 @@ export function App() {
       formElement.reset();
       setAbsenceType("VACATION");
       setPendingAbsenceAttachment(null);
+      setShowAbsenceForm(false);
       setNotice("Žiadosť o neprítomnosť bola odoslaná na schválenie.");
     } catch (reason: unknown) {
       setError(errorText(reason));
@@ -3467,9 +3469,14 @@ export function App() {
     <section className="content-page">
       <header className="dashboard-title-row">
         <div><span className="eyebrow">PRACOVNÝ ČAS</span><h1>Dochádzka</h1><p>Začiatok zmeny, prestávky a čistý odpracovaný čas.</p></div>
-        {isEmployeeUser && <button className="button button-outline" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); }}>
-          <Plus size={15} /> Nový záznam
-        </button>}
+        <div className="attendance-title-actions">
+          <button className="button button-primary" onClick={() => { setShowAbsenceForm(true); setPendingAbsenceAttachment(null); setError(""); setNotice(""); }}>
+            <Palmtree size={15} /> Nahlásiť neprítomnosť
+          </button>
+          {isEmployeeUser && <button className="button button-outline" onClick={() => { setEditingEntry(null); setPendingPhotos([]); setError(""); setShowEntryForm(true); }}>
+            <Plus size={15} /> Nový záznam
+          </button>}
+        </div>
       </header>
       {canManageAttendance && <section className="panel">
         <label className="field"><span>Zobraziť dochádzku zamestnanca</span>
@@ -3501,7 +3508,7 @@ export function App() {
       </section>}
       {isEmployeeUser && <p className="attendance-schedule-note">Prihlásenie zamestnanca zmenu automaticky spustí alebo obnoví. Odhlásenie ani zatvorenie aplikácie časovač nezastaví; na zastavenie použite tlačidlo „Ukončiť zmenu“.</p>}
       {notice && <p className="invite-success" role="status">{notice}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && !showAbsenceForm && <p className="form-error" role="alert">{error}</p>}
       <section className="records-section attendance-history">
         <div className="section-title-row">
           <div><h2><History size={17} /> Mesačný prehľad</h2><p>Súčet skutočne zaznamenaného času vrátane odpočítaných prestávok.</p></div>
@@ -3595,24 +3602,33 @@ export function App() {
             </div>;
           })}</div>}
       </section>
-      <section className="panel work-order-create-panel">
-        <div className="panel-heading"><div><h2><Palmtree size={17} /> Nahlásiť neprítomnosť</h2><p>Dovolenka, home office alebo iná neprítomnosť čaká na schválenie vedením.</p></div></div>
-        <form className="form-stack work-order-form" onSubmit={(event) => void createAbsenceRequest(event)}>
-          <div className="form-grid">
-            <label className="field"><span>Typ neprítomnosti</span><select name="type" value={absenceType} onChange={(event) => setAbsenceType(event.target.value as AbsenceType)} required>
-              {(Object.keys(ABSENCE_TYPE_LABELS) as AbsenceType[]).map((type) => <option key={type} value={type}>{ABSENCE_TYPE_LABELS[type]}</option>)}
-            </select></label>
-            <label className="field"><span>Od</span><input type="date" name="start_date" required /></label>
-            <label className="field"><span>Do</span><input type="date" name="end_date" required /></label>
+      {showAbsenceForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) setShowAbsenceForm(false);
+      }}>
+        <section className="panel detail-modal work-order-create-modal" role="dialog" aria-modal="true" aria-labelledby="absence-form-title">
+          <div className="modal-heading">
+            <div><span className="eyebrow">DOCHÁDZKA</span><h2 id="absence-form-title">Nahlásiť neprítomnosť</h2><p>Dovolenka, home office alebo iná neprítomnosť čaká na schválenie vedením.</p></div>
+            <button type="button" className="logout-button" aria-label="Zavrieť formulár" disabled={busy} onClick={() => setShowAbsenceForm(false)}><X size={18} /></button>
           </div>
-          <label className="field"><span>Poznámka {absenceType === "OTHER" ? <small>povinné pri type „Iné“</small> : <small>voliteľné</small>}</span><textarea name="note" rows={2} maxLength={1000} placeholder="Doplňujúca informácia…" required={absenceType === "OTHER"} /></label>
-          <label className="field"><span>Príloha <small>voliteľné, napr. potvrdenie od lekára</small></span><input type="file" accept="image/*,application/pdf" onChange={(event) => setPendingAbsenceAttachment(event.target.files?.[0] ?? null)} disabled={busy} /></label>
-          {pendingAbsenceAttachment && <p className="muted">Vybraná príloha: {pendingAbsenceAttachment.name}</p>}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          {notice && <p className="invite-success" role="status">{notice}</p>}
-          <div className="form-actions"><button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Odosielam…" : "Odoslať žiadosť"}</button></div>
-        </form>
-      </section>
+          <form className="form-stack" onSubmit={(event) => void createAbsenceRequest(event)}>
+            <div className="form-grid">
+              <label className="field"><span>Typ neprítomnosti</span><select name="type" value={absenceType} onChange={(event) => setAbsenceType(event.target.value as AbsenceType)} required>
+                {(Object.keys(ABSENCE_TYPE_LABELS) as AbsenceType[]).map((type) => <option key={type} value={type}>{ABSENCE_TYPE_LABELS[type]}</option>)}
+              </select></label>
+              <label className="field"><span>Od</span><input type="date" name="start_date" required /></label>
+              <label className="field"><span>Do</span><input type="date" name="end_date" required /></label>
+            </div>
+            <label className="field"><span>Poznámka {absenceType === "OTHER" ? <small>povinné pri type „Iné“</small> : <small>voliteľné</small>}</span><textarea name="note" rows={2} maxLength={1000} placeholder="Doplňujúca informácia…" required={absenceType === "OTHER"} /></label>
+            <label className="field"><span>Príloha <small>voliteľné, napr. potvrdenie od lekára</small></span><input type="file" accept="image/*,application/pdf" onChange={(event) => setPendingAbsenceAttachment(event.target.files?.[0] ?? null)} disabled={busy} /></label>
+            {pendingAbsenceAttachment && <p className="muted">Vybraná príloha: {pendingAbsenceAttachment.name}</p>}
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <div className="form-actions">
+              <button type="button" className="button button-quiet" disabled={busy} onClick={() => setShowAbsenceForm(false)}>Zrušiť</button>
+              <button className="button button-primary" disabled={busy}><Plus size={15} />{busy ? "Odosielam…" : "Odoslať žiadosť"}</button>
+            </div>
+          </form>
+        </section>
+      </div>}
       <section className="records-section">
         <div className="section-title-row"><div><h2><ClipboardList size={17} /> Neprítomnosti</h2><p>{isManager ? "Žiadosti celého tímu." : "Vaše žiadosti o neprítomnosť."}</p></div><span className="count-pill">{(isManager ? absenceRequests : absenceRequests.filter((request) => request.user_id === session?.user.id)).length} žiadostí</span></div>
         {(() => {
