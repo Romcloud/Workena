@@ -127,7 +127,7 @@ function parseSheetRow(value: unknown): SheetRow | null {
 
   const timestampValue = String(row.updated_at ?? "").trim();
   const timestamp = timestampValue && !Number.isNaN(Date.parse(timestampValue))
-    ? new Date(Math.min(Date.parse(timestampValue), Date.now())).toISOString()
+    ? new Date(Date.parse(timestampValue)).toISOString()
     : new Date().toISOString();
   const rawStatus = String(row.status ?? "").trim();
   return {
