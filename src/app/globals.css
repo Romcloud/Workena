@@ -404,6 +404,18 @@ button:disabled { opacity: .65; cursor: wait; }
 .modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .modal-heading h2 { margin: 4px 0 0; font: 700 20px var(--serif); }
 .customer-toolbar { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(200px, 320px); align-items: end; gap: 12px; padding: 15px; }
+.customer-sheets-panel { display: grid; gap: 12px; margin-bottom: 14px; padding: 15px; }
+.customer-sheets-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.customer-sheets-heading > div:first-child { display: grid; gap: 5px; }
+.customer-sheets-heading h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: #3e4d3f; font: 700 16px var(--serif); }
+.customer-sheets-heading p, .customer-sheets-guide p { margin: 0; color: #758073; font-size: 10px; line-height: 1.6; }
+.customer-sheets-guide { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid #e6ebe4; border-radius: 8px; background: #fafcf9; }
+.customer-sheets-guide summary { color: #465647; cursor: pointer; font-size: 11px; font-weight: 700; }
+.customer-sheets-guide ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; color: #586458; font-size: 10px; line-height: 1.55; }
+.customer-sheets-guide code { padding: 1px 4px; border-radius: 4px; background: #eef2ed; }
+.customer-sheets-setup { display: grid; justify-items: start; gap: 10px; }
+.customer-sheets-script { min-height: 150px !important; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace !important; }
+.customer-sheets-url { display: grid; width: min(680px, 100%); grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
 .customer-search { min-width: 0; }
 .search-input { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #e2e7e0; border-radius: 7px; color: #838b82; background: #fff; }
 .search-input input { min-width: 0; width: 100%; border: 0; outline: 0; }
@@ -746,6 +758,8 @@ button:disabled { opacity: .65; cursor: wait; }
   .work-order-create-modal input[type="date"],
   .work-order-create-modal input[type="time"] { width: 100%; min-width: 0; min-height: 44px; }
   .customer-toolbar { grid-template-columns: 1fr; }
+  .customer-sheets-url { grid-template-columns: 1fr; }
+  .customer-sheets-url .button { width: 100%; min-height: 40px; }
   .permissions-member-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
   .permissions-member-row .permission-toggle { grid-column: span 1; }
   .work-order-heading { align-items: flex-start; }
