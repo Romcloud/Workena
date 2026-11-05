@@ -133,6 +133,9 @@ async function functionErrorText(error: unknown) {
 }
 
 function googleSheetsErrorMessage(message: string) {
+  if (/Unexpected token ['"]?</i.test(message) || /<!doctype html|<html[\s>]/i.test(message)) {
+    return "Google vrátil prihlasovaciu alebo chybovú stránku namiesto odpovede skriptu. V Apps Scripte otvorte Nasadiť → Spravovať nasadenia → Upraviť (ceruzka), nastavte „Spúšťať ako: Ja“ a „Kto má prístup: Všetci (Anyone)“, vyberte „Nová verzia“ a kliknite Nasadiť. Potom skopírujte novú URL webovej aplikácie končiacu na /exec a nahraďte ňou URL vo Workene. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.";
+  }
   if (/Google Apps Script vrátil chybu (401|403)/.test(message)) {
     return "Google odmietol prístup k skriptu. V Apps Scripte otvorte Nasadiť → Spravovať nasadenia → Upraviť (ceruzka), nastavte „Spúšťať ako: Ja“ a „Kto má prístup: Všetci (Anyone)“, vyberte „Nová verzia“ a kliknite Nasadiť. Potom v Workene použite URL webovej aplikácie končiacu na /exec. Ak možnosť „Všetci (Anyone)“ chýba, blokuje ju nastavenie Google Workspace.";
   }
