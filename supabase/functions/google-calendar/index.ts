@@ -52,6 +52,7 @@ type GoogleEvent = {
   start?: { date?: string; dateTime?: string; timeZone?: string };
   end?: { date?: string; dateTime?: string; timeZone?: string };
   extendedProperties?: { private?: Record<string, string> };
+  workOrderId?: string | null;
 };
 
 type GoogleEventsPage = {
@@ -220,7 +221,7 @@ async function listGoogleCalendarMonth(accessToken: string, month: string) {
     showDeleted: "false",
     timeMin: new Date(monthStart - 2 * 24 * 60 * 60 * 1000).toISOString(),
     timeMax: new Date(Date.UTC(year, monthNumber, 1) + 2 * 24 * 60 * 60 * 1000).toISOString(),
-    fields: "items(id,status,summary,description,location,htmlLink,start,end),nextPageToken",
+    fields: "items(id,status,summary,description,location,htmlLink,start,end,extendedProperties(private)),nextPageToken",
   });
   const events: GoogleEvent[] = [];
   let pageToken = "";
@@ -244,6 +245,7 @@ async function listGoogleCalendarMonth(accessToken: string, month: string) {
       htmlLink: event.htmlLink ?? "",
       start: event.start,
       end: event.end,
+      workOrderId: event.extendedProperties?.private?.workenaOrderId ?? null,
     }));
 }
 
@@ -622,7 +624,20 @@ Deno.serve(async (req) => {
         freshConnection = await refreshGoogleAccessToken(freshConnection, adminClient);
       }
       const events = await listGoogleCalendarMonth(freshConnection.access_token, body.month);
-      return json(200, { events });
+      const { data: mappings, error: mappingsError } = await adminClient
+        .from("google_work_order_events")
+        .select("google_event_id, work_order_id")
+        .eq("company_id", body.companyId)
+        .eq("user_id", authData.user.id)
+        .is("google_deleted_at", null);
+      if (mappingsError) return json(500, { error: mappingsError.message });
+      const workOrderByEventId = new Map((mappings ?? []).map((mapping) => [mapping.google_event_id, mapping.work_order_id]));
+      return json(200, {
+        events: events.map((event) => ({
+          ...event,
+          workOrderId: workOrderByEventId.get(event.id) ?? event.workOrderId,
+        })),
+      });
     }
 
     const result = await syncCompanyCalendar(adminClient, connection as Connection);

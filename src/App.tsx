@@ -51,6 +51,7 @@ type GoogleCalendarDisplayEvent = {
   description: string;
   location: string;
   htmlLink: string;
+  workOrderId?: string | null;
   start: { date?: string; dateTime?: string };
   end: { date?: string; dateTime?: string };
 };
@@ -3609,7 +3610,10 @@ export function App() {
         ? `${workOrderMonth}-${String(day).padStart(2, "0")}`
         : null;
     });
-    const displayedGoogleCalendarEvents = googleCalendarEventsMonth === workOrderMonth ? googleCalendarEvents : [];
+    const visibleCalendarWorkOrderIds = new Set(calendarOrders.map(({ order }) => order.id));
+    const displayedGoogleCalendarEvents = googleCalendarEventsMonth === workOrderMonth
+      ? googleCalendarEvents.filter((event) => !event.workOrderId || !visibleCalendarWorkOrderIds.has(event.workOrderId))
+      : [];
     const getCalendarDayItems = (day: string) => {
       const dayOrders = calendarOrders.filter(({ order }) => order.due_date === day);
       return [
