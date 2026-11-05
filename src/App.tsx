@@ -132,6 +132,13 @@ async function functionErrorText(error: unknown) {
   return errorText(error);
 }
 
+function googleSheetsErrorMessage(message: string) {
+  if (/Google Apps Script vrátil chybu (401|403)/.test(message)) {
+    return "Google odmietol prístup k skriptu. V Apps Scripte otvorte Nasadiť → Spravovať nasadenia → Upraviť (ceruzka), nastavte „Spúšťať ako: Ja“ a „Kto má prístup: Všetci (Anyone)“, vyberte „Nová verzia“ a kliknite Nasadiť. Potom v Workene použite URL webovej aplikácie končiacu na /exec. Ak možnosť „Všetci (Anyone)“ chýba, blokuje ju nastavenie Google Workspace.";
+  }
+  return message;
+}
+
 type EmailTemplate = "company_welcome" | "company_join_request" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
 
 async function sendTransactionalEmail(
@@ -1236,14 +1243,14 @@ export function App() {
     }).then(async ({ data, error: statusError }) => {
       if (!alive) return;
       if (statusError) {
-        setGoogleSheetsError(await functionErrorText(statusError));
+        setGoogleSheetsError(googleSheetsErrorMessage(await functionErrorText(statusError)));
         return;
       }
       setGoogleSheetsError("");
       setGoogleSheetsConnection(data ?? null);
       setGoogleSheetsWebAppUrl(data?.webAppUrl ?? "");
     }).catch((reason: unknown) => {
-      if (alive) setGoogleSheetsError(errorText(reason));
+      if (alive) setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
     });
     return () => { alive = false; };
   }, [activeCompanyId, activeMembership?.active, activeMembership?.is_salesperson, client, session]);
@@ -1963,7 +1970,7 @@ export function App() {
       }));
       setNotice("Kľúč je pripravený. Skopírujte celý skript do editora Google Apps Script.");
     } catch (reason: unknown) {
-      setGoogleSheetsError(errorText(reason));
+      setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -1999,7 +2006,7 @@ export function App() {
       }));
       setNotice("Google Tabuľka je prepojená. Synchronizáciu spustíte tlačidlom.");
     } catch (reason: unknown) {
-      setGoogleSheetsError(errorText(reason));
+      setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -2029,7 +2036,7 @@ export function App() {
         `Synchronizácia dokončená. Nové z tabuľky: ${data.createdFromSheet}; nové v tabuľke: ${data.createdInSheet}; zmenené v Workene: ${data.updatedInWorkena}; zmenené v tabuľke: ${data.updatedInSheet}; vymazané v Workene: ${data.deletedInWorkena}; vymazané v tabuľke: ${data.deletedInSheet}.`,
       );
     } catch (reason: unknown) {
-      setGoogleSheetsError(errorText(reason));
+      setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
       setGoogleSheetsMessage("");
     } finally {
       setGoogleSheetsBusy(false);
@@ -2052,7 +2059,7 @@ export function App() {
       setGoogleSheetsSecret("");
       setNotice("Google Tabuľka bola odpojená.");
     } catch (reason: unknown) {
-      setGoogleSheetsError(errorText(reason));
+      setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -3649,12 +3656,12 @@ export function App() {
           <details className="customer-sheets-guide" open={!googleSheetsConnection?.connected}>
             <summary>Návod na prepojenie Google Tabuľky</summary>
             <ol>
-              <li>Vytvorte Google Tabuľku a otvorte <strong>Rozšírenia → Apps Script</strong>.</li>
-              <li>Kliknite na vytvorenie kľúča nižšie, skopírujte skript a vložte ho do editora. Uložte projekt.</li>
-              <li>V editore vyberte funkciu <code>setupWorkena</code>, kliknite na <strong>Spustiť</strong> a povoľte prístup k tabuľke.</li>
-              <li>Vyberte <strong>Nasadiť → Nové nasadenie → Webová aplikácia</strong>; spúšťať ako vy, prístup nastavte na <strong>Všetci</strong>. Nasadenie potvrďte a skopírujte jeho URL.</li>
-              <li>Vložte URL nižšie a kliknite na prepojenie. Potom môžete kedykoľvek stlačiť <strong>Synchronizovať</strong>.</li>
+              <li>V Google Tabuľke otvorte <strong>Rozšírenia → Apps Script</strong>.</li>
+              <li>Nižšie kliknite na <strong>Vytvoriť bezpečný kľúč a skript</strong>, skopírujte skript, vložte ho do editora a uložte.</li>
+              <li>Spustite <code>setupWorkena</code> a povoľte prístup. Potom zvoľte <strong>Nasadiť → Nové nasadenie → Webová aplikácia</strong>: „Spúšťať ako: Ja“, „Kto má prístup: Všetci (Anyone)“. Kliknite <strong>Nasadiť</strong> a povoľte prístup.</li>
+              <li>Skopírujte <strong>URL webovej aplikácie</strong> (končí na <code>/exec</code>), vložte ju nižšie a kliknite na <strong>Prepojiť tabuľku</strong>. Potom už stačí kliknúť na <strong>Synchronizovať</strong>.</li>
             </ol>
+            <p className="muted">Ak ste webovú aplikáciu už nasadili, otvorte <strong>Nasadiť → Spravovať nasadenia → Upraviť</strong> (ceruzka), nastavte prístup na <strong>Všetci (Anyone)</strong>, zvoľte <strong>Nová verzia</strong> a znova kliknite na <strong>Nasadiť</strong>. Bez tohto nastavenia Google vráti chybu 401. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.</p>
             <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Zmeny a vymazania sa prenesú podľa času poslednej úpravy. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
             <div className="customer-sheets-setup">
               <button className="button button-outline button-small" disabled={googleSheetsBusy} onClick={() => void createGoogleSheetsScript()}>
