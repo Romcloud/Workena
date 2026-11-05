@@ -45,6 +45,15 @@ import { PrivacyPolicy } from "./PrivacyPolicy";
 type WorkspaceMembership = Membership & { company: Company };
 type Page = "dashboard" | "attendance" | "workOrders" | "customers" | "trips" | "reports" | "team" | "history" | "profile" | "terms" | "privacy" | "admin";
 type PhotoView = Photo & { url: string };
+type GoogleCalendarDisplayEvent = {
+  id: string;
+  summary: string;
+  description: string;
+  location: string;
+  htmlLink: string;
+  start: { date?: string; dateTime?: string };
+  end: { date?: string; dateTime?: string };
+};
 
 const PHOTO_BUCKET = "work-photos";
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -139,6 +148,28 @@ function dateLabel(value: string) {
 function localDateKey(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function googleCalendarEventDateRange(event: GoogleCalendarDisplayEvent) {
+  const start = event.start.date ?? (event.start.dateTime ? localDateKey(event.start.dateTime) : "");
+  const endDate = event.end.date ?? (event.end.dateTime ? localDateKey(new Date(new Date(event.end.dateTime).getTime() - 1)) : start);
+  if (event.end.date) {
+    return { start, end: previousCalendarDate(endDate) };
+  }
+  return { start, end: endDate };
+}
+
+function googleCalendarEventTime(event: GoogleCalendarDisplayEvent) {
+  if (event.start.date) return "Celý deň";
+  if (!event.start.dateTime) return "";
+  const formatTime = (value: string) => new Intl.DateTimeFormat("sk-SK", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return `${formatTime(event.start.dateTime)} – ${event.end.dateTime ? formatTime(event.end.dateTime) : "—"}`;
+}
+
+function previousCalendarDate(day: string) {
+  const date = new Date(`${day}T12:00:00`);
+  date.setDate(date.getDate() - 1);
+  return localDateKey(date);
 }
 
 function hoursLabel(value: number) {
@@ -341,6 +372,7 @@ export function App() {
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarEmployeeFilter, setCalendarEmployeeFilter] = useState("ALL");
   const [selectedCalendarOrder, setSelectedCalendarOrder] = useState<WorkOrder | null>(null);
+  const [selectedGoogleCalendarEvent, setSelectedGoogleCalendarEvent] = useState<GoogleCalendarDisplayEvent | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
   const [showLunchBreakPrompt, setShowLunchBreakPrompt] = useState(false);
@@ -368,6 +400,10 @@ export function App() {
   const [googleCalendarBusy, setGoogleCalendarBusy] = useState(false);
   const [googleCalendarLastSync, setGoogleCalendarLastSync] = useState("");
   const [googleCalendarMessage, setGoogleCalendarMessage] = useState("");
+  const [googleCalendarEvents, setGoogleCalendarEvents] = useState<GoogleCalendarDisplayEvent[]>([]);
+  const [googleCalendarEventsMonth, setGoogleCalendarEventsMonth] = useState("");
+  const [googleCalendarEventsLoading, setGoogleCalendarEventsLoading] = useState(false);
+  const [googleCalendarEventsError, setGoogleCalendarEventsError] = useState("");
   const [photos, setPhotos] = useState<PhotoView[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -534,6 +570,53 @@ export function App() {
     });
     return () => { alive = false; };
   }, [activeCompanyId, activeMembership?.active, client, session]);
+
+  useEffect(() => {
+    if (!client || !session || !activeCompanyId || !activeMembership?.active || !googleCalendarConnected || page !== "workOrders") {
+      setGoogleCalendarEvents([]);
+      setGoogleCalendarEventsMonth("");
+      setGoogleCalendarEventsLoading(false);
+      setGoogleCalendarEventsError("");
+      return;
+    }
+
+    let alive = true;
+    let requestInProgress = false;
+    setGoogleCalendarEventsMonth("");
+    setGoogleCalendarEventsLoading(true);
+    setGoogleCalendarEventsError("");
+    const loadEvents = async () => {
+      if (requestInProgress) return;
+      requestInProgress = true;
+      try {
+        const { data, error: eventsError } = await client.functions.invoke<{ events?: GoogleCalendarDisplayEvent[] }>("google-calendar", {
+          body: { action: "events", companyId: activeCompanyId, month: workOrderMonth },
+        });
+        if (eventsError) throw new Error(await functionErrorText(eventsError));
+        if (!Array.isArray(data?.events)) throw new Error("Google Kalendár nevrátil platný zoznam udalostí.");
+        if (!alive) return;
+        setGoogleCalendarEvents(data.events);
+        setGoogleCalendarEventsMonth(workOrderMonth);
+        setGoogleCalendarEventsError("");
+      } catch (reason: unknown) {
+        if (alive) setGoogleCalendarEventsError(errorText(reason));
+      } finally {
+        requestInProgress = false;
+        if (alive) setGoogleCalendarEventsLoading(false);
+      }
+    };
+    void loadEvents();
+    const interval = window.setInterval(() => void loadEvents(), 60_000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void loadEvents();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [activeCompanyId, activeMembership?.active, client, googleCalendarConnected, page, session, workOrderMonth]);
 
   useEffect(() => {
     if (activeCompanyId) window.localStorage.setItem("workena-company", activeCompanyId);
@@ -1208,7 +1291,7 @@ export function App() {
       provider: "google",
       options: {
         redirectTo: redirectUrl.toString(),
-        scopes: "https://www.googleapis.com/auth/calendar.events",
+        scopes: "https://www.googleapis.com/auth/calendar.events.owned",
         queryParams: { access_type: "offline", prompt: "consent" },
       },
     });
@@ -3503,6 +3586,7 @@ export function App() {
         ? `${workOrderMonth}-${String(day).padStart(2, "0")}`
         : null;
     });
+    const displayedGoogleCalendarEvents = googleCalendarEventsMonth === workOrderMonth ? googleCalendarEvents : [];
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
@@ -3567,8 +3651,8 @@ export function App() {
           </div>
           {activeMembership?.active && <div className="calendar-google-sync">
             <div><strong>Google Kalendár</strong><small>{googleCalendarConnected
-              ? `Prepojený${googleCalendarLastSync ? ` · synchronizované ${timeLabel(googleCalendarLastSync)}` : " · synchronizuje sa každú minútu"}`
-              : "Prepojte svoj Google účet pre obojsmernú synchronizáciu priradených zákaziek."}</small></div>
+              ? `Prepojený · udalosti sa zobrazujú iba na čítanie${googleCalendarLastSync ? ` · zákazky synchronizované ${timeLabel(googleCalendarLastSync)}` : ""}`
+              : "Prepojte svoj Google účet na zobrazenie udalostí a obojsmernú synchronizáciu priradených zákaziek."}</small></div>
             <div className="calendar-google-actions">
               {googleCalendarConnected && <button className="button button-outline button-small" disabled={googleCalendarBusy} onClick={() => {
                 setGoogleCalendarBusy(true);
@@ -3579,6 +3663,11 @@ export function App() {
               </button>
             </div>
             {googleCalendarMessage && <p className="form-error" role="alert">{googleCalendarMessage}</p>}
+            {googleCalendarEventsLoading && <p className="calendar-google-events-status" role="status">Načítavam udalosti Google Kalendára…</p>}
+            {googleCalendarEventsError && <p className="form-error" role="alert">{googleCalendarEventsError}</p>}
+          </div>}
+          {googleCalendarConnected && <div className="calendar-legend">
+            <span className="calendar-legend-item"><i className="calendar-google-event-swatch" />Osobné udalosti z Google Kalendára</span>
           </div>}
           {isCompanyOwner && calendarEmployees.length > 0 && <div className="calendar-legend" aria-label="Farby zákaziek podľa zamestnanca">
             <label className="calendar-employee-filter"><span>Zamestnanec</span><select value={calendarEmployeeFilter} onChange={(event) => setCalendarEmployeeFilter(event.target.value)}>
@@ -3594,14 +3683,43 @@ export function App() {
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
               const dayOrders = day ? calendarOrders.filter(({ order }) => order.due_date === day) : [];
+              const dayItems = day ? [
+                ...dayOrders.map(({ order, userId, member }) => ({
+                  kind: "order" as const,
+                  order,
+                  userId,
+                  member,
+                  sortAt: new Date(`${order.due_date}T${order.starts_at ?? "00:00:00"}`).getTime(),
+                })),
+                ...displayedGoogleCalendarEvents.flatMap((event) => {
+                  const range = googleCalendarEventDateRange(event);
+                  if (day < range.start || day > range.end) return [];
+                  const eventStartsToday = range.start === day;
+                  return [{
+                    kind: "google" as const,
+                    event,
+                    continues: !eventStartsToday,
+                    sortAt: eventStartsToday
+                      ? event.start.dateTime
+                        ? new Date(event.start.dateTime).getTime()
+                        : new Date(`${day}T00:00:00`).getTime()
+                      : new Date(`${day}T00:00:00`).getTime(),
+                  }];
+                }),
+              ].sort((left, right) => left.sortAt - right.sortAt) : [];
               return <div className={`calendar-day ${day ? "" : "calendar-day-empty"}`} role="gridcell" key={`${day ?? "empty"}-${index}`}>
-                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayOrders.slice(0, 3).map(({ order, userId, member }) => <button
+                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayItems.map((item) => item.kind === "order" ? <button
                   className="calendar-order"
-                  style={getCalendarEmployeeColor(userId)}
-                  key={`${order.id}-${userId}`}
-                  title={`${member?.full_name || member?.email || "Zamestnanec"} · ${order.title} · ${workOrderStatusName(order.status)}`}
-                  onClick={() => setSelectedCalendarOrder(order)}
-                >{order.time_to_arrange ? "Dohodnúť čas · " : order.starts_at ? `${order.starts_at.slice(0, 5)} · ` : ""}{isCompanyOwner ? `${member?.full_name || member?.email || "Zamestnanec"} · ` : ""}{order.title}</button>)}{dayOrders.length > 3 && <small>+{dayOrders.length - 3} ďalšie</small>}</>}
+                  style={getCalendarEmployeeColor(item.userId)}
+                  key={`order-${item.order.id}-${item.userId}`}
+                  title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
+                  onClick={() => setSelectedCalendarOrder(item.order)}
+                >{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</button> : <button
+                  className="calendar-google-event"
+                  key={`google-${day}-${item.event.id}`}
+                  title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
+                  onClick={() => setSelectedGoogleCalendarEvent(item.event)}
+                >{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</button>)}</>}
               </div>;
             })}
           </div>
@@ -3778,6 +3896,24 @@ export function App() {
             setSelectedCalendarOrder(null);
             window.setTimeout(() => document.getElementById(`work-order-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
           }}>Otvoriť zákazku</button></div>
+        </section>
+      </div>}
+      {selectedGoogleCalendarEvent && <div className="modal-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setSelectedGoogleCalendarEvent(null);
+      }}>
+        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="google-calendar-event-title">
+          <div className="modal-heading"><div><span className="eyebrow">GOOGLE KALENDÁR · IBA NA ČÍTANIE</span><h2 id="google-calendar-event-title">{selectedGoogleCalendarEvent.summary || "Udalosť Google Kalendára"}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedGoogleCalendarEvent(null)}><X size={18} /></button></div>
+          <p><CalendarDays size={15} /> {selectedGoogleCalendarEvent.start.date
+            ? `${dateLabel(`${selectedGoogleCalendarEvent.start.date}T12:00:00`)}${googleCalendarEventDateRange(selectedGoogleCalendarEvent).end !== selectedGoogleCalendarEvent.start.date ? ` – ${dateLabel(`${googleCalendarEventDateRange(selectedGoogleCalendarEvent).end}T12:00:00`)}` : ""} · celý deň`
+            : selectedGoogleCalendarEvent.start.dateTime
+              ? new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selectedGoogleCalendarEvent.start.dateTime)) + (selectedGoogleCalendarEvent.end.dateTime ? ` – ${new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selectedGoogleCalendarEvent.end.dateTime))}` : "")
+              : "Čas udalosti nie je uvedený"}</p>
+          {selectedGoogleCalendarEvent.location && <p><MapPin size={15} /> {selectedGoogleCalendarEvent.location}</p>}
+          {selectedGoogleCalendarEvent.description && <p className="calendar-google-event-description">{selectedGoogleCalendarEvent.description}</p>}
+          <div className="form-actions">
+            {selectedGoogleCalendarEvent.htmlLink && <a className="button button-outline button-small" href={selectedGoogleCalendarEvent.htmlLink} target="_blank" rel="noreferrer">Otvoriť v Google Kalendári</a>}
+            <button className="button button-quiet" onClick={() => setSelectedGoogleCalendarEvent(null)}>Zavrieť</button>
+          </div>
         </section>
       </div>}
       </section>

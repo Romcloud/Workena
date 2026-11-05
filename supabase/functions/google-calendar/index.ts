@@ -48,6 +48,7 @@ type GoogleEvent = {
   summary?: string;
   description?: string;
   location?: string;
+  htmlLink?: string;
   start?: { date?: string; dateTime?: string; timeZone?: string };
   end?: { date?: string; dateTime?: string; timeZone?: string };
   extendedProperties?: { private?: Record<string, string> };
@@ -202,6 +203,48 @@ async function listGoogleChanges(accessToken: string, syncToken: string | null) 
     nextSyncToken = page.nextSyncToken ?? nextSyncToken;
   } while (pageToken);
   return { events, syncToken: nextSyncToken };
+}
+
+async function listGoogleCalendarMonth(accessToken: string, month: string) {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) throw new Error("Mesiac Google Kalendára nemá platný formát.");
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (monthNumber < 1 || monthNumber > 12) throw new Error("Mesiac Google Kalendára nie je platný.");
+
+  const monthStart = Date.UTC(year, monthNumber - 1, 1);
+  const params = new URLSearchParams({
+    maxResults: "2500",
+    orderBy: "startTime",
+    singleEvents: "true",
+    showDeleted: "false",
+    timeMin: new Date(monthStart - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    timeMax: new Date(Date.UTC(year, monthNumber, 1) + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    fields: "items(id,status,summary,description,location,htmlLink,start,end),nextPageToken",
+  });
+  const events: GoogleEvent[] = [];
+  let pageToken = "";
+  do {
+    if (pageToken) params.set("pageToken", pageToken);
+    const page = await googleRequest<GoogleEventsPage>(
+      accessToken,
+      `/calendars/primary/events?${params}`,
+    );
+    events.push(...(page.items ?? []));
+    pageToken = page.nextPageToken ?? "";
+  } while (pageToken);
+
+  return events
+    .filter((event) => event.status !== "cancelled" && (event.start?.date || event.start?.dateTime) && (event.end?.date || event.end?.dateTime))
+    .map((event) => ({
+      id: event.id,
+      summary: event.summary ?? "",
+      description: event.description ?? "",
+      location: event.location ?? "",
+      htmlLink: event.htmlLink ?? "",
+      start: event.start,
+      end: event.end,
+    }));
 }
 
 async function refreshGoogleAccessToken(connection: Connection, adminClient: ReturnType<typeof createClient>) {
@@ -483,6 +526,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       action?: string;
       companyId?: string;
+      month?: string;
       accessToken?: string;
       refreshToken?: string;
     };
@@ -522,7 +566,7 @@ Deno.serve(async (req) => {
     const { data: authData, error: authError } = await userClient.auth.getUser();
     if (authError || !authData.user) return json(401, { error: "Neplatné prihlásenie." });
 
-    if (!body.companyId || !["connect", "status", "sync"].includes(body.action ?? "")) {
+    if (!body.companyId || !["connect", "status", "sync", "events"].includes(body.action ?? "")) {
       return json(400, { error: "Požiadavka nemá platnú akciu alebo firmu." });
     }
 
@@ -561,9 +605,24 @@ Deno.serve(async (req) => {
       .eq("user_id", authData.user.id)
       .maybeSingle();
     if (connectionError) return json(500, { error: connectionError.message });
-    if (!connection) return json(200, { connected: false, lastSyncAt: null });
+    if (!connection) {
+      return body.action === "status"
+        ? json(200, { connected: false, lastSyncAt: null })
+        : json(409, { error: "Google Kalendár nie je prepojený." });
+    }
     if (body.action === "status") {
       return json(200, { connected: true, lastSyncAt: connection.last_sync_at });
+    }
+    if (body.action === "events") {
+      if (!body.month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.month)) {
+        return json(400, { error: "Vyberte platný mesiac Google Kalendára." });
+      }
+      let freshConnection = connection as Connection;
+      if (new Date(freshConnection.access_token_expires_at).getTime() < Date.now() + 120_000) {
+        freshConnection = await refreshGoogleAccessToken(freshConnection, adminClient);
+      }
+      const events = await listGoogleCalendarMonth(freshConnection.access_token, body.month);
+      return json(200, { events });
     }
 
     const result = await syncCompanyCalendar(adminClient, connection as Connection);
