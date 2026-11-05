@@ -3666,7 +3666,7 @@ export function App() {
             </ol>
             <p className="muted">Ak ste webovú aplikáciu už nasadili, otvorte <strong>Nasadiť → Spravovať nasadenia → Upraviť</strong> (ceruzka), nastavte prístup na <strong>Všetci (Anyone)</strong>, zvoľte <strong>Nová verzia</strong> a znova kliknite na <strong>Nasadiť</strong>. Bez tohto nastavenia Google vráti chybu 401. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.</p>
             <p className="muted">Existujúce stĺpce „Dátum“, „Meno“, „Lokalita“, „Odkiaľ prišiel dopyt“, „Produkty“, dátum CP, kontakty, „Cca bez DPH“ a zaškrtávacie polia stavov sa rozpoznajú. Pomocné ID stĺpce pridá skript a skryje ich. „Poznámky“ zostanú v tabuľke zachované, ale nezobrazia sa vo Workene.</p>
-            <p className="muted">Prázdne bunky sa pri synchronizácii považujú za „bez zmeny“ a nevymažú existujúcu hodnotu na druhej strane. Ak chcete odstrániť zákazníka, vymažte celý riadok v tabuľke.</p>
+            <p className="muted">Prázdne bunky sa pri synchronizácii považujú za „bez zmeny“, okrem ceny: prázdna cena alebo hodnota „--“ sa vo Workene uloží ako „bez ceny“. Ak chcete odstrániť zákazníka, vymažte celý riadok v tabuľke.</p>
             <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Zmeny a vymazania sa prenesú podľa času poslednej úpravy. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
             <div className="customer-sheets-setup">
               <button className="button button-outline button-small" disabled={googleSheetsBusy} onClick={() => void createGoogleSheetsScript()}>
@@ -3722,7 +3722,7 @@ export function App() {
               <tbody>{visibleCustomers.map((customer) => {
                 const salesperson = roster.find((member) => member.user_id === customer.salesperson_id);
                 return <tr key={customer.id}>
-                  <td>{dateLabel(`${customer.customer_date}T12:00:00`)}</td><td><strong>{customer.full_name}</strong></td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ? dateLabel(`${customer.quote_sent_date}T12:00:00`) : "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "—" : `${hoursLabel(Number(customer.estimated_price))} €`}</td>
+                  <td>{dateLabel(`${customer.customer_date}T12:00:00`)}</td><td><strong>{customer.full_name}</strong></td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ? dateLabel(`${customer.quote_sent_date}T12:00:00`) : "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "Bez ceny" : `${hoursLabel(Number(customer.estimated_price))} €`}</td>
                   <td><select aria-label={`Stav zákazníka ${customer.full_name}`} value={customer.status} disabled={busy} onChange={(event) => void changeCustomerStatus(customer, event.target.value as CustomerStatus)}><option value="APPROVED">Schválená</option><option value="REJECTED">Zamietnutá</option><option value="NO_RESPONSE">Bez odpovede</option></select><small className={`customer-status customer-status-${customer.status.toLowerCase()}`}>{customerStatusName(customer.status)}</small></td>
                   {isCompanyOwner && <td>{salesperson?.full_name || salesperson?.email || "—"}</td>}
                   <td><div className="customer-row-actions"><button className="button button-outline button-small" onClick={() => { setEditingCustomer(customer); setError(""); setNotice(""); setShowCustomerForm(true); }}><Pencil size={13} /> Upraviť</button><button className="button button-danger button-small" disabled={busy} onClick={() => void deleteCustomer(customer)}><Trash2 size={13} /> Vymazať</button></div></td>
@@ -5038,7 +5038,7 @@ export function App() {
         <p className="print-report-company">{activeMembership?.company.name} · Vygenerované {dateLabel(new Date().toISOString())}</p>
         <table><thead><tr><th>Dátum</th><th>Meno</th><th>Lokalita</th><th>Dopyt</th><th>Produkt</th><th>CP poslaná</th><th>Kontakt</th><th>Približná cena</th><th>Stav</th></tr></thead>
           <tbody>{visibleCustomers.map((customer) => <tr key={customer.id}>
-            <td>{customer.customer_date}</td><td>{customer.full_name}</td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ?? "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "—" : `${hoursLabel(Number(customer.estimated_price))} €`}</td><td>{customerStatusName(customer.status)}</td>
+            <td>{customer.customer_date}</td><td>{customer.full_name}</td><td>{customer.location}</td><td>{customer.lead_source}</td><td>{customer.product}</td><td>{customer.quote_sent_date ?? "—"}</td><td>{customer.contact_details}</td><td>{customer.estimated_price === null ? "Bez ceny" : `${hoursLabel(Number(customer.estimated_price))} €`}</td><td>{customerStatusName(customer.status)}</td>
           </tr>)}</tbody>
         </table>
         <footer className="print-report-footer">Workena · {activeMembership?.company.name}</footer>

@@ -112,8 +112,9 @@ function parseSheetRow(value: unknown): SheetRow | null {
   const product = String(row.product ?? "").trim();
   const contactDetails = String(row.contact_details ?? "").trim();
 
-  const priceValue = String(row.estimated_price ?? "").trim().replace(/\s/g, "").replace(",", ".");
-  const estimatedPrice = priceValue ? Number(priceValue) : null;
+  const rawPrice = String(row.estimated_price ?? "").trim();
+  const priceValue = rawPrice.replace(/\s/g, "").replace(",", ".");
+  const estimatedPrice = !rawPrice || rawPrice === "--" ? null : Number(priceValue);
   if (estimatedPrice !== null && (!Number.isFinite(estimatedPrice) || estimatedPrice < 0 || estimatedPrice > 9999999999.99)) {
     throw new Error(`Zákazník ${fullName}: cena musí byť nezáporné číslo.`);
   }
@@ -167,6 +168,7 @@ function valuesEqual(left: CustomerValues, right: CustomerValues) {
 function partialValuesEqual(left: PartialCustomerValues, right: CustomerValues) {
   return customerFields.every((field) => {
     const value = left[field];
+    if (field === "estimated_price" && value !== undefined) return value === right[field];
     return isNonBlank(value) ? value === right[field] : !isNonBlank(right[field]);
   });
 }
@@ -192,13 +194,14 @@ function mergeCustomerValues(...sources: PartialCustomerValues[]): CustomerValue
     estimated_price: null,
     status: "NO_RESPONSE",
   };
-  const pick = <K extends keyof CustomerValues>(field: K): CustomerValues[K] => {
+  const pick = <K extends Exclude<keyof CustomerValues, "estimated_price">>(field: K): CustomerValues[K] => {
     for (const source of sources) {
       const value = source[field];
       if (isNonBlank<K>(value)) return value;
     }
     return defaults[field];
   };
+  const priceSource = sources.find((source) => source.estimated_price !== undefined);
   return {
     customer_date: pick("customer_date"),
     full_name: pick("full_name"),
@@ -207,14 +210,16 @@ function mergeCustomerValues(...sources: PartialCustomerValues[]): CustomerValue
     product: pick("product"),
     quote_sent_date: pick("quote_sent_date"),
     contact_details: pick("contact_details"),
-    estimated_price: pick("estimated_price"),
+    estimated_price: priceSource ? priceSource.estimated_price ?? null : defaults.estimated_price,
     status: pick("status"),
   };
 }
 
 function rowChanged(row: { values: PartialCustomerValues; updated_at: string }, snapshot: SnapshotEntry | undefined) {
   return !snapshot
-    || customerFields.some((field) => isNonBlank(row.values[field]) && row.values[field] !== snapshot.values[field])
+    || customerFields.some((field) => field === "estimated_price"
+      ? row.values.estimated_price !== undefined && row.values.estimated_price !== snapshot.values.estimated_price
+      : isNonBlank(row.values[field]) && row.values[field] !== snapshot.values[field])
     || row.updated_at !== snapshot.updated_at;
 }
 
