@@ -77,6 +77,21 @@ function hasCustomerHeaders(headers) {
   );
 }
 
+function hasCustomerRows(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 2 || lastColumn < 1) return false;
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  if (!hasCustomerHeaders(headers)) return false;
+  const normalized = headers.map(normalizedHeader);
+  const nameIndex = normalized.findIndex((header) =>
+    WORKENA_HEADER_ALIASES.full_name.some((alias) => normalizedHeader(alias) === header)
+  );
+  return sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues().some((cells) =>
+    String(cells[nameIndex] ?? "").trim() !== ""
+  );
+}
+
 function isChecked(value) {
   return value === true || String(value).trim().toLowerCase() === "true";
 }
@@ -105,9 +120,11 @@ function setupWorkena() {
   PropertiesService.getScriptProperties().setProperty("WORKENA_SPREADSHEET_ID", spreadsheet.getId());
   const sheets = spreadsheet.getSheets();
   const activeSheet = spreadsheet.getActiveSheet();
-  const sheet = [activeSheet, ...sheets.filter((candidate) => candidate.getSheetId() !== activeSheet.getSheetId())]
-    .find((candidate) => candidate.getLastColumn() > 0
-      && hasCustomerHeaders(candidate.getRange(1, 1, 1, candidate.getLastColumn()).getDisplayValues()[0]))
+  const matchingSheets = [activeSheet, ...sheets.filter((candidate) => candidate.getSheetId() !== activeSheet.getSheetId())]
+    .filter((candidate) => candidate.getLastColumn() > 0
+      && hasCustomerHeaders(candidate.getRange(1, 1, 1, candidate.getLastColumn()).getDisplayValues()[0]));
+  const sheet = matchingSheets.find(hasCustomerRows)
+    || matchingSheets[0]
     || spreadsheet.getSheetByName(WORKENA_SHEET_NAME)
     || activeSheet;
   PropertiesService.getScriptProperties().setProperty("WORKENA_SHEET_ID", String(sheet.getSheetId()));
