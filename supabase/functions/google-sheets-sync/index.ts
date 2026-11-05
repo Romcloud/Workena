@@ -561,20 +561,36 @@ Deno.serve(async (req) => {
     const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
     const { data: authData, error: authError } = await userClient.auth.getUser();
     if (authError || !authData.user) return json(401, { error: "Neplatné prihlásenie." });
-    const body = await req.json() as { action?: string; companyId?: string; webAppUrl?: string };
+    const body = await req.json() as { action?: string; companyId?: string; webAppUrl?: string; salespersonId?: string };
     if (!body.companyId || !["create", "configure", "status", "sync", "disconnect"].includes(body.action ?? "")) {
       return json(400, { error: "Požiadavka nemá platnú akciu alebo firmu." });
     }
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
     const { data: membership, error: membershipError } = await adminClient.from("memberships")
-      .select("user_id,is_salesperson")
+      .select("user_id,role,is_salesperson")
       .eq("company_id", body.companyId)
       .eq("user_id", authData.user.id)
       .eq("active", true)
       .maybeSingle();
     if (membershipError) return json(500, { error: membershipError.message });
-    if (!membership?.is_salesperson) return json(403, { error: "Google Tabuľku môže pripojiť iba aktívny obchodník." });
+    if (!membership) return json(403, { error: "Nemáte aktívne členstvo v tejto firme." });
+
+    let syncUserId = authData.user.id;
+    if (body.action === "sync" && body.salespersonId && body.salespersonId !== authData.user.id) {
+      if (membership.role !== "OWNER") return json(403, { error: "Tabuľku iného obchodníka môže synchronizovať iba vlastník firmy." });
+      const { data: targetMembership, error: targetMembershipError } = await adminClient.from("memberships")
+        .select("user_id,is_salesperson")
+        .eq("company_id", body.companyId)
+        .eq("user_id", body.salespersonId)
+        .eq("active", true)
+        .maybeSingle();
+      if (targetMembershipError) return json(500, { error: targetMembershipError.message });
+      if (!targetMembership?.is_salesperson) return json(400, { error: "Vybraný člen nie je aktívny obchodník." });
+      syncUserId = targetMembership.user_id;
+    } else if (!membership.is_salesperson) {
+      return json(403, { error: "Google Tabuľku môže pripojiť iba aktívny obchodník." });
+    }
 
     if (body.action === "create") {
       const secret = makeSharedSecret();
@@ -601,7 +617,7 @@ Deno.serve(async (req) => {
     const { data: connection, error: connectionError } = await adminClient.from("google_sheets_customer_connections")
       .select("company_id,user_id,web_app_url,shared_secret,snapshot,last_sync_at,sync_lock_until")
       .eq("company_id", body.companyId)
-      .eq("user_id", authData.user.id)
+      .eq("user_id", body.action === "sync" ? syncUserId : authData.user.id)
       .maybeSingle();
     if (connectionError) return json(500, { error: connectionError.message });
     if (!connection) {

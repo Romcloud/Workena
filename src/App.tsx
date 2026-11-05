@@ -2105,12 +2105,14 @@ export function App() {
       if (customerError) throw customerError;
       await refreshCustomers();
       let sheetSyncFailed = false;
-      if (!editingCustomer && salespersonId === session?.user.id && googleSheetsConnection?.connected) {
+      const shouldSyncCustomerToSheet = !editingCustomer
+        && (isCompanyOwner || (salespersonId === session?.user.id && googleSheetsConnection?.connected));
+      if (shouldSyncCustomerToSheet) {
         setGoogleSheetsBusy(true);
         try {
           const { data: syncData, error: syncError } = await client.functions.invoke<{ syncedAt: string }>(
             "google-sheets-sync",
-            { body: { action: "sync", companyId: activeCompanyId } },
+            { body: { action: "sync", companyId: activeCompanyId, ...(isCompanyOwner ? { salespersonId } : {}) } },
           );
           if (syncError) throw new Error(await functionErrorText(syncError));
           if (!syncData?.syncedAt) throw new Error("Synchronizácia nevrátila potvrdený výsledok.");
@@ -3669,7 +3671,7 @@ export function App() {
           <div className="customer-sheets-heading">
             <div><span className="eyebrow">GOOGLE TABUĽKY</span><h2><FileSpreadsheet size={18} /> Synchronizácia zákazníkov</h2>
               <p>{googleSheetsConnection?.connected
-                ? `Tabuľka je prepojená${googleSheetsConnection.lastSyncAt ? ` · naposledy synchronizovaná ${new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(googleSheetsConnection.lastSyncAt))}` : ""}.`
+                ? `Tabuľka je prepojená${googleSheetsConnection.lastSyncAt ? ` · naposledy synchronizovaná ${new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(googleSheetsConnection.lastSyncAt))}` : ""}. Noví zákazníci sa pridajú automaticky; ostatné zmeny synchronizujte ručne.`
                 : "Prepojte svoju tabuľku. Synchronizácia zmien aj vymazaní sa spúšťa ručne."}</p>
             </div>
             <div className="calendar-google-actions">
