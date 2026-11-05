@@ -3610,6 +3610,50 @@ export function App() {
         : null;
     });
     const displayedGoogleCalendarEvents = googleCalendarEventsMonth === workOrderMonth ? googleCalendarEvents : [];
+    const getCalendarDayItems = (day: string) => {
+      const dayOrders = calendarOrders.filter(({ order }) => order.due_date === day);
+      return [
+        ...dayOrders.map(({ order, userId, member }) => ({
+          kind: "order" as const,
+          order,
+          userId,
+          member,
+          sortAt: new Date(`${order.due_date}T${order.starts_at ?? "00:00:00"}`).getTime(),
+        })),
+        ...displayedGoogleCalendarEvents.flatMap((event) => {
+          const range = googleCalendarEventDateRange(event);
+          if (day < range.start || day > range.end) return [];
+          const eventStartsToday = range.start === day;
+          return [{
+            kind: "google" as const,
+            event,
+            continues: !eventStartsToday,
+            sortAt: eventStartsToday
+              ? event.start.dateTime
+                ? new Date(event.start.dateTime).getTime()
+                : new Date(`${day}T00:00:00`).getTime()
+              : new Date(`${day}T00:00:00`).getTime(),
+          }];
+        }),
+      ].sort((left, right) => left.sortAt - right.sortAt);
+    };
+    const calendarDaysWithEvents = calendarCells.flatMap((day) => {
+      if (!day) return [];
+      const items = getCalendarDayItems(day);
+      return items.length ? [{ day, items }] : [];
+    });
+    const renderCalendarItem = (item: ReturnType<typeof getCalendarDayItems>[number], day: string) => item.kind === "order" ? <button
+      className="calendar-order"
+      style={getCalendarEmployeeColor(item.userId)}
+      key={`order-${item.order.id}-${item.userId}`}
+      title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
+      onClick={() => setSelectedCalendarOrder(item.order)}
+    >{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</button> : <button
+      className="calendar-google-event"
+      key={`google-${day}-${item.event.id}`}
+      title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
+      onClick={() => setSelectedGoogleCalendarEvent(item.event)}
+    >{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</button>;
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
@@ -3705,46 +3749,39 @@ export function App() {
           <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
-              const dayOrders = day ? calendarOrders.filter(({ order }) => order.due_date === day) : [];
-              const dayItems = day ? [
-                ...dayOrders.map(({ order, userId, member }) => ({
-                  kind: "order" as const,
-                  order,
-                  userId,
-                  member,
-                  sortAt: new Date(`${order.due_date}T${order.starts_at ?? "00:00:00"}`).getTime(),
-                })),
-                ...displayedGoogleCalendarEvents.flatMap((event) => {
-                  const range = googleCalendarEventDateRange(event);
-                  if (day < range.start || day > range.end) return [];
-                  const eventStartsToday = range.start === day;
-                  return [{
-                    kind: "google" as const,
-                    event,
-                    continues: !eventStartsToday,
-                    sortAt: eventStartsToday
-                      ? event.start.dateTime
-                        ? new Date(event.start.dateTime).getTime()
-                        : new Date(`${day}T00:00:00`).getTime()
-                      : new Date(`${day}T00:00:00`).getTime(),
-                  }];
-                }),
-              ].sort((left, right) => left.sortAt - right.sortAt) : [];
+              const dayItems = day ? getCalendarDayItems(day) : [];
               return <div className={`calendar-day ${day ? "" : "calendar-day-empty"}`} role="gridcell" key={`${day ?? "empty"}-${index}`}>
-                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayItems.map((item) => item.kind === "order" ? <button
-                  className="calendar-order"
-                  style={getCalendarEmployeeColor(item.userId)}
-                  key={`order-${item.order.id}-${item.userId}`}
-                  title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
-                  onClick={() => setSelectedCalendarOrder(item.order)}
-                >{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</button> : <button
-                  className="calendar-google-event"
-                  key={`google-${day}-${item.event.id}`}
-                  title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
-                  onClick={() => setSelectedGoogleCalendarEvent(item.event)}
-                >{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</button>)}</>}
+                {day && <><strong className="calendar-day-number">{Number(day.slice(-2))}</strong>{dayItems.map((item) => renderCalendarItem(item, day))}</>}
               </div>;
             })}
+          </div>
+          <div className="calendar-agenda" aria-label="Udalosti kalendára zoradené podľa dňa">
+            {calendarDaysWithEvents.length
+              ? calendarDaysWithEvents.map(({ day, items }) => <section className="calendar-agenda-day" key={day}>
+                <header className="calendar-agenda-date">
+                  <strong>{Number(day.slice(-2))}</strong>
+                  <span>{new Intl.DateTimeFormat("sk-SK", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${day}T12:00:00`))}</span>
+                </header>
+                <div className="calendar-agenda-items">{items.map((item) => item.kind === "order" ? <button
+                  className="calendar-agenda-item calendar-agenda-order"
+                  style={getCalendarEmployeeColor(item.userId)}
+                  key={`agenda-order-${item.order.id}-${item.userId}`}
+                  onClick={() => setSelectedCalendarOrder(item.order)}
+                >
+                  <strong>{item.order.time_to_arrange ? "Dohodnúť čas" : item.order.starts_at ? item.order.starts_at.slice(0, 5) : "Bez času"}</strong>
+                  <span>{item.order.title}</span>
+                  {isCompanyOwner && <small>{item.member?.full_name || item.member?.email || "Zamestnanec"}</small>}
+                </button> : <button
+                  className="calendar-agenda-item calendar-agenda-google"
+                  key={`agenda-google-${day}-${item.event.id}`}
+                  onClick={() => setSelectedGoogleCalendarEvent(item.event)}
+                >
+                  <strong>{item.continues ? "Pokračuje" : googleCalendarEventTime(item.event)}</strong>
+                  <span>{item.event.summary || "Udalosť Google Kalendára"}</span>
+                  <small>Google Kalendár</small>
+                </button>)}</div>
+              </section>)
+              : <p className="calendar-agenda-empty">V tomto mesiaci zatiaľ nie sú naplánované žiadne udalosti ani zákazky.</p>}
           </div>
         </section>
         <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
