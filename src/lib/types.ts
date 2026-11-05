@@ -191,6 +191,8 @@ export type AbsenceRequest = {
   type: AbsenceType;
   start_date: string;
   end_date: string;
+  start_time: string | null;
+  end_time: string | null;
   note: string | null;
   status: AbsenceStatus;
   review_note: string | null;

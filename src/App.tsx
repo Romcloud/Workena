@@ -348,6 +348,7 @@ export function App() {
   const [vehicleTrips, setVehicleTrips] = useState<VehicleTrip[]>([]);
   const [absenceRequests, setAbsenceRequests] = useState<AbsenceRequest[]>([]);
   const [absenceType, setAbsenceType] = useState<AbsenceType>("VACATION");
+  const [absenceTimeLimited, setAbsenceTimeLimited] = useState(false);
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [selectedPaymentRequestId, setSelectedPaymentRequestId] = useState<string | null>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
@@ -2311,6 +2312,20 @@ export function App() {
     if (!client || !activeCompanyId) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    if (absenceTimeLimited) {
+      const startDate = String(form.get("start_date") ?? "");
+      const endDate = String(form.get("end_date") ?? "");
+      const startTime = String(form.get("start_time") ?? "");
+      const endTime = String(form.get("end_time") ?? "");
+      if (startDate !== endDate) {
+        setError("Časovo obmedzená neprítomnosť musí byť zadaná pre jeden deň.");
+        return;
+      }
+      if (!startTime || !endTime || endTime <= startTime) {
+        setError("Vyplňte čas od a do; čas do musí byť neskôr.");
+        return;
+      }
+    }
     setBusy(true);
     setError("");
     setNotice("");
@@ -2321,6 +2336,10 @@ export function App() {
         p_start_date: String(form.get("start_date") ?? ""),
         p_end_date: String(form.get("end_date") ?? ""),
         p_note: String(form.get("note") ?? ""),
+        ...(absenceTimeLimited ? {
+          p_start_time: String(form.get("start_time") ?? ""),
+          p_end_time: String(form.get("end_time") ?? ""),
+        } : {}),
       });
       if (createError) {
         setError(createError.message);
@@ -2351,6 +2370,7 @@ export function App() {
       await refreshAbsenceRequests();
       formElement.reset();
       setAbsenceType("VACATION");
+      setAbsenceTimeLimited(false);
       setPendingAbsenceAttachment(null);
       setShowAbsenceForm(false);
       setNotice("Žiadosť o neprítomnosť bola odoslaná na schválenie.");
@@ -3650,6 +3670,12 @@ export function App() {
               </select></label>
               <label className="field"><span>Od</span><input type="date" name="start_date" required /></label>
               <label className="field"><span>Do</span><input type="date" name="end_date" required /></label>
+              <label className="permission-toggle"><input type="checkbox" checked={absenceTimeLimited} onChange={(event) => setAbsenceTimeLimited(event.target.checked)} /> Len v konkrétnom čase</label>
+              {absenceTimeLimited && <>
+                <label className="field"><span>Čas od</span><input type="time" name="start_time" required /></label>
+                <label className="field"><span>Čas do</span><input type="time" name="end_time" required /></label>
+                <p className="muted">Časovo obmedzená neprítomnosť platí pre jeden deň. Zadajte rovnaký dátum v poliach Od a Do.</p>
+              </>}
             </div>
             <label className="field"><span>Poznámka {absenceType === "OTHER" ? <small>povinné pri type „Iné“</small> : <small>voliteľné</small>}</span><textarea name="note" rows={2} maxLength={1000} placeholder="Doplňujúca informácia…" required={absenceType === "OTHER"} /></label>
             <label className="field"><span>Príloha <small>voliteľné, napr. potvrdenie od lekára</small></span><input type="file" accept="image/*,application/pdf" onChange={(event) => setPendingAbsenceAttachment(event.target.files?.[0] ?? null)} disabled={busy} /></label>
@@ -3681,7 +3707,7 @@ export function App() {
               </div>
               <div className="work-order-meta">
                 {isManager && <span><Users size={14} />{member?.full_name || member?.email || "Bývalý zamestnanec"}</span>}
-                <span><Clock3 size={14} />{dateLabel(`${request.start_date}T12:00:00`)} – {dateLabel(`${request.end_date}T12:00:00`)}</span>
+                <span><Clock3 size={14} />{dateLabel(`${request.start_date}T12:00:00`)} – {dateLabel(`${request.end_date}T12:00:00`)}{request.start_time && request.end_time ? ` · ${request.start_time.slice(0, 5)} – ${request.end_time.slice(0, 5)}` : " · celý deň"}</span>
               </div>
               {request.note && <p className="work-order-description">{request.note}</p>}
               {request.review_note && <p className="work-order-description"><b>Poznámka vedenia:</b> {request.review_note}</p>}
@@ -3889,6 +3915,14 @@ export function App() {
     const calendarEmployees = roster
       .filter((member) => member.active && (member.role === "EMPLOYEE" || member.is_employee))
       .map((member) => ({ userId: member.user_id, member }));
+    const calendarAbsences = absenceRequests.filter((request) => {
+      if (request.status !== "APPROVED") return false;
+      const member = roster.find((person) => person.user_id === request.user_id);
+      if (!member || !(member.role === "EMPLOYEE" || member.is_employee)) return false;
+      return isCompanyOwner
+        ? calendarEmployeeFilter === "ALL" || calendarEmployeeFilter === request.user_id
+        : request.user_id === session?.user.id;
+    });
     const calendarMonthStart = new Date(`${workOrderMonth}-01T12:00:00`);
     const calendarOffset = (calendarMonthStart.getDay() + 6) % 7;
     const calendarDayCount = new Date(calendarMonthStart.getFullYear(), calendarMonthStart.getMonth() + 1, 0).getDate();
@@ -3906,6 +3940,19 @@ export function App() {
     const getCalendarDayItems = (day: string) => {
       const dayOrders = calendarOrders.filter(({ order }) => order.due_date === day);
       return [
+        ...calendarAbsences
+          .filter((request) => request.start_date <= day && request.end_date >= day)
+          .map((request) => {
+            const member = roster.find((person) => person.user_id === request.user_id);
+            return {
+              kind: "absence" as const,
+              request,
+              member,
+              sortAt: request.start_time
+                ? new Date(`${day}T${request.start_time}`).getTime()
+                : new Date(`${day}T00:00:00`).getTime(),
+            };
+          }),
         ...dayOrders.map(({ order, userId, member }) => ({
           kind: "order" as const,
           order,
@@ -3941,12 +3988,19 @@ export function App() {
       key={`order-${item.order.id}-${item.userId}`}
       title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
       onClick={() => setSelectedCalendarOrder(item.order)}
-    >{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</button> : <button
+    >{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</button> : item.kind === "google" ? <button
       className="calendar-google-event"
       key={`google-${day}-${item.event.id}`}
       title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
       onClick={() => setSelectedGoogleCalendarEvent(item.event)}
-    >{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</button>;
+    >{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</button> : <div
+      className="calendar-absence"
+      key={`absence-${day}-${item.request.id}`}
+      title={`Schválená neprítomnosť · ${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${ABSENCE_TYPE_LABELS[item.request.type]}`}
+      style={getCalendarEmployeeColor(item.request.user_id)}
+    ><strong>{item.request.start_time && item.request.end_time
+        ? `${item.request.start_time.slice(0, 5)}–${item.request.end_time.slice(0, 5)}`
+        : "Celý deň"}</strong>{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{ABSENCE_TYPE_LABELS[item.request.type]}</div>;
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
@@ -3991,7 +4045,7 @@ export function App() {
         </div>}
         <section className="records-section">
           <div className="section-title-row">
-            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky s termínom v mesiaci.</p></div>
+            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky a schválené neprítomnosti v mesiaci.</p></div>
             <div className="calendar-heading-actions">
               <button className="button button-outline button-small" onClick={() => setCalendarExpanded((expanded) => !expanded)}>{calendarExpanded ? "Zmenšiť kalendár" : "Roztiahnuť kalendár"}</button>
               <div className="attendance-month-switch">
@@ -4039,6 +4093,9 @@ export function App() {
               {member?.full_name || member?.email}
             </span>)}
           </div>}
+          {calendarAbsences.length > 0 && <div className="calendar-legend" aria-label="Legenda neprítomností">
+            <span className="calendar-legend-item"><i className="calendar-absence-swatch" />Schválená neprítomnosť</span>
+          </div>}
           <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
@@ -4064,7 +4121,7 @@ export function App() {
                   <strong>{item.order.time_to_arrange ? "Dohodnúť čas" : item.order.starts_at ? item.order.starts_at.slice(0, 5) : "Bez času"}</strong>
                   <span>{item.order.title}</span>
                   {isCompanyOwner && <small>{item.member?.full_name || item.member?.email || "Zamestnanec"}</small>}
-                </button> : <button
+                </button> : item.kind === "google" ? <button
                   className="calendar-agenda-item calendar-agenda-google"
                   key={`agenda-google-${day}-${item.event.id}`}
                   onClick={() => setSelectedGoogleCalendarEvent(item.event)}
@@ -4072,7 +4129,17 @@ export function App() {
                   <strong>{item.continues ? "Pokračuje" : googleCalendarEventTime(item.event)}</strong>
                   <span>{item.event.summary || "Udalosť Google Kalendára"}</span>
                   <small>Google Kalendár</small>
-                </button>)}</div>
+                </button> : <div
+                  className="calendar-agenda-item calendar-agenda-absence"
+                  key={`agenda-absence-${day}-${item.request.id}`}
+                  style={getCalendarEmployeeColor(item.request.user_id)}
+                >
+                  <strong>{item.request.start_time && item.request.end_time
+                    ? `${item.request.start_time.slice(0, 5)} – ${item.request.end_time.slice(0, 5)}`
+                    : "Celý deň"}</strong>
+                  <span>{ABSENCE_TYPE_LABELS[item.request.type]}</span>
+                  <small>{item.member?.full_name || item.member?.email || "Zamestnanec"} · Schválená neprítomnosť</small>
+                </div>)}</div>
               </section>)
               : <p className="calendar-agenda-empty">V tomto mesiaci zatiaľ nie sú naplánované žiadne udalosti ani zákazky.</p>}
           </div>
