@@ -68,6 +68,15 @@ function headerMap(headers) {
   return indexes;
 }
 
+function hasCustomerHeaders(headers) {
+  const normalized = new Set(headers.map(normalizedHeader));
+  const contains = (field) => WORKENA_HEADER_ALIASES[field].some((alias) => normalized.has(normalizedHeader(alias)));
+  const required = ["customer_date", "full_name", "location", "lead_source", "product", "quote_sent_date", "contact_details", "estimated_price"];
+  return required.every(contains) && (
+    contains("status") || (contains("approved") && contains("rejected") && contains("no_response"))
+  );
+}
+
 function isChecked(value) {
   return value === true || String(value).trim().toLowerCase() === "true";
 }
@@ -94,8 +103,14 @@ function setupWorkena() {
   const spreadsheet = SpreadsheetApp.getActive();
   if (!spreadsheet) throw new Error("Otvorte tento skript cez Rozšírenia → Apps Script priamo v Google Tabuľke.");
   PropertiesService.getScriptProperties().setProperty("WORKENA_SPREADSHEET_ID", spreadsheet.getId());
-  const sheet = spreadsheet.getSheetByName(WORKENA_SHEET_NAME) || spreadsheet.getActiveSheet();
-  if (sheet.getName() !== WORKENA_SHEET_NAME) sheet.setName(WORKENA_SHEET_NAME);
+  const sheets = spreadsheet.getSheets();
+  const activeSheet = spreadsheet.getActiveSheet();
+  const sheet = [activeSheet, ...sheets.filter((candidate) => candidate.getSheetId() !== activeSheet.getSheetId())]
+    .find((candidate) => candidate.getLastColumn() > 0
+      && hasCustomerHeaders(candidate.getRange(1, 1, 1, candidate.getLastColumn()).getDisplayValues()[0]))
+    || spreadsheet.getSheetByName(WORKENA_SHEET_NAME)
+    || activeSheet;
+  PropertiesService.getScriptProperties().setProperty("WORKENA_SHEET_ID", String(sheet.getSheetId()));
   const headers = sheet.getLastRow() ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0] : [];
   if (!headers.length || headers.every((value) => !value)) {
     sheet.getRange(1, 1, 1, WORKENA_HEADERS.length).setValues([WORKENA_HEADERS]);
@@ -153,7 +168,8 @@ function doPost(event) {
 function onEditWorkena(event) {
   if (!event || !event.range) return;
   const sheet = event.range.getSheet();
-  if (sheet.getName() !== WORKENA_SHEET_NAME || event.range.getRow() < 2) return;
+  const sheetId = PropertiesService.getScriptProperties().getProperty("WORKENA_SHEET_ID");
+  if (!sheetId || String(sheet.getSheetId()) !== sheetId || event.range.getRow() < 2) return;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
   const idColumn = headers.indexOf("_workena_id") + 1;
   const updatedColumn = headers.indexOf("_workena_updated_at") + 1;
@@ -342,10 +358,11 @@ function workenaStateSheet() {
 
 function workenaSheet() {
   const spreadsheetId = PropertiesService.getScriptProperties().getProperty("WORKENA_SPREADSHEET_ID");
-  if (!spreadsheetId) throw new Error("Spustite najskôr funkciu setupWorkena() z editora Google Tabuľky.");
+  const sheetId = PropertiesService.getScriptProperties().getProperty("WORKENA_SHEET_ID");
+  if (!spreadsheetId || !sheetId) throw new Error("Spustite najskôr funkciu setupWorkena() z editora Google Tabuľky.");
   const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-  const sheet = spreadsheet.getSheetByName(WORKENA_SHEET_NAME);
-  if (!sheet) throw new Error("Hárok Workena sa nenašiel. Spustite znovu funkciu setupWorkena() z editora Google Tabuľky.");
+  const sheet = spreadsheet.getSheetById(Number(sheetId));
+  if (!sheet) throw new Error("Hárok s údajmi sa nenašiel. Spustite znovu funkciu setupWorkena() z editora Google Tabuľky.");
   return sheet;
 }
 

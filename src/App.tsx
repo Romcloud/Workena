@@ -3661,7 +3661,7 @@ export function App() {
             <ol>
               <li>Otvorte svoju existujúcu Google Tabuľku a kliknite na <strong>Rozšírenia → Apps Script</strong>.</li>
               <li>Nižšie kliknite na <strong>Vytvoriť bezpečný kľúč a skript</strong>, skopírujte skript, vložte ho do editora a uložte. Ak ste už skript vložili, nahraďte celý starý kód novým.</li>
-              <li>Spustite <code>setupWorkena</code> a povoľte prístup. Skript použije aktuálny hárok s vašimi zákazníkmi a premenuje ho na „Workena“; údaje nemažte. Potom zvoľte <strong>Nasadiť → Nové nasadenie → Webová aplikácia</strong>: „Spúšťať ako: Ja“, „Kto má prístup: Všetci (Anyone)“. Kliknite <strong>Nasadiť</strong> a povoľte prístup.</li>
+              <li>Spustite <code>setupWorkena</code> a povoľte prístup. Skript nájde váš hárok podľa hlavičiek zákazníkov a použije ho; vaše údaje nemaže ani nepresúva. Potom zvoľte <strong>Nasadiť → Nové nasadenie → Webová aplikácia</strong>: „Spúšťať ako: Ja“, „Kto má prístup: Všetci (Anyone)“. Kliknite <strong>Nasadiť</strong> a povoľte prístup.</li>
               <li>Skopírujte <strong>URL webovej aplikácie</strong> (končí na <code>/exec</code>), vložte ju nižšie a kliknite na <strong>Prepojiť tabuľku</strong>. Potom už stačí kliknúť na <strong>Synchronizovať</strong>.</li>
             </ol>
             <p className="muted">Ak ste webovú aplikáciu už nasadili, otvorte <strong>Nasadiť → Spravovať nasadenia → Upraviť</strong> (ceruzka), nastavte prístup na <strong>Všetci (Anyone)</strong>, zvoľte <strong>Nová verzia</strong> a znova kliknite na <strong>Nasadiť</strong>. Bez tohto nastavenia Google vráti chybu 401. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.</p>
