@@ -420,6 +420,7 @@ export function App() {
   const [googleSheetsBusy, setGoogleSheetsBusy] = useState(false);
   const [googleSheetsWebAppUrl, setGoogleSheetsWebAppUrl] = useState("");
   const [googleSheetsSecret, setGoogleSheetsSecret] = useState("");
+  const [googleSheetsError, setGoogleSheetsError] = useState("");
   const [photos, setPhotos] = useState<PhotoView[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1222,21 +1223,24 @@ export function App() {
       setGoogleSheetsConnection(null);
       setGoogleSheetsWebAppUrl("");
       setGoogleSheetsSecret("");
+      setGoogleSheetsError("");
       return;
     }
     let alive = true;
+    setGoogleSheetsError("");
     void client.functions.invoke<GoogleSheetsConnectionStatus>("google-sheets-sync", {
       body: { action: "status", companyId: activeCompanyId },
     }).then(async ({ data, error: statusError }) => {
       if (!alive) return;
       if (statusError) {
-        setError(await functionErrorText(statusError));
+        setGoogleSheetsError(await functionErrorText(statusError));
         return;
       }
+      setGoogleSheetsError("");
       setGoogleSheetsConnection(data ?? null);
       setGoogleSheetsWebAppUrl(data?.webAppUrl ?? "");
     }).catch((reason: unknown) => {
-      if (alive) setError(errorText(reason));
+      if (alive) setGoogleSheetsError(errorText(reason));
     });
     return () => { alive = false; };
   }, [activeCompanyId, activeMembership?.active, activeMembership?.is_salesperson, client, session]);
@@ -1937,7 +1941,7 @@ export function App() {
     if (!client || !activeCompanyId) return;
     if (googleSheetsConnection?.configured && !window.confirm("Vytvorením nového kľúča prestane fungovať aktuálny skript, kým doň nevložíte nový kľúč a znovu ho nenasadíte. Pokračovať?")) return;
     setGoogleSheetsBusy(true);
-    setError("");
+    setGoogleSheetsError("");
     setNotice("");
     try {
       const { data, error: createError } = await client.functions.invoke<{ secret?: string }>("google-sheets-sync", {
@@ -1955,7 +1959,7 @@ export function App() {
       }));
       setNotice("Kľúč je pripravený. Skopírujte celý skript do editora Google Apps Script.");
     } catch (reason: unknown) {
-      setError(errorText(reason));
+      setGoogleSheetsError(errorText(reason));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -1966,7 +1970,7 @@ export function App() {
       await navigator.clipboard.writeText(GOOGLE_SHEETS_APPS_SCRIPT.replace("__WORKENA_SHARED_SECRET__", googleSheetsSecret));
       setNotice("Skript bol skopírovaný. Vložte ho v editore Apps Script.");
     } catch (reason: unknown) {
-      setError(`Skript sa nepodarilo skopírovať: ${errorText(reason)}`);
+      setGoogleSheetsError(`Skript sa nepodarilo skopírovať: ${errorText(reason)}`);
     }
   };
 
@@ -1974,7 +1978,7 @@ export function App() {
     event.preventDefault();
     if (!client || !activeCompanyId) return;
     setGoogleSheetsBusy(true);
-    setError("");
+    setGoogleSheetsError("");
     setNotice("");
     try {
       const { data, error: configureError } = await client.functions.invoke<{ connected: boolean; webAppUrl?: string }>("google-sheets-sync", {
@@ -1990,7 +1994,7 @@ export function App() {
       }));
       setNotice("Google Tabuľka je prepojená. Synchronizáciu spustíte tlačidlom.");
     } catch (reason: unknown) {
-      setError(errorText(reason));
+      setGoogleSheetsError(errorText(reason));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -1999,7 +2003,7 @@ export function App() {
   const syncGoogleSheetsCustomers = async () => {
     if (!client || !activeCompanyId) return;
     setGoogleSheetsBusy(true);
-    setError("");
+    setGoogleSheetsError("");
     setNotice("");
     try {
       const { data, error: syncError } = await client.functions.invoke<{
@@ -2019,7 +2023,7 @@ export function App() {
         `Synchronizácia dokončená. Nové z tabuľky: ${data.createdFromSheet}; nové v tabuľke: ${data.createdInSheet}; zmenené v Workene: ${data.updatedInWorkena}; zmenené v tabuľke: ${data.updatedInSheet}; vymazané v Workene: ${data.deletedInWorkena}; vymazané v tabuľke: ${data.deletedInSheet}.`,
       );
     } catch (reason: unknown) {
-      setError(errorText(reason));
+      setGoogleSheetsError(errorText(reason));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -2028,7 +2032,7 @@ export function App() {
   const disconnectGoogleSheets = async () => {
     if (!client || !activeCompanyId || !window.confirm("Odpojiť Google Tabuľku? Ďalšie zmeny sa už nebudú synchronizovať.")) return;
     setGoogleSheetsBusy(true);
-    setError("");
+    setGoogleSheetsError("");
     setNotice("");
     try {
       const { error: disconnectError } = await client.functions.invoke("google-sheets-sync", {
@@ -2040,7 +2044,7 @@ export function App() {
       setGoogleSheetsSecret("");
       setNotice("Google Tabuľka bola odpojená.");
     } catch (reason: unknown) {
-      setError(errorText(reason));
+      setGoogleSheetsError(errorText(reason));
     } finally {
       setGoogleSheetsBusy(false);
     }
@@ -3632,6 +3636,7 @@ export function App() {
               {googleSheetsConnection?.configured && <button className="button button-quiet button-small" disabled={googleSheetsBusy} onClick={() => void disconnectGoogleSheets()}>Odpojiť</button>}
             </div>
           </div>
+          {googleSheetsError && <p className="form-error" role="alert">{googleSheetsError}</p>}
           <details className="customer-sheets-guide" open={!googleSheetsConnection?.connected}>
             <summary>Návod na prepojenie Google Tabuľky</summary>
             <ol>
