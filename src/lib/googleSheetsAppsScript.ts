@@ -211,6 +211,28 @@ function onChangeWorkena(event) {
   if (event && event.changeType === "REMOVE_ROW") captureRemovedRows();
 }
 
+function comparableDate(value, timeZone) {
+  if (value instanceof Date) return Utilities.formatDate(value, timeZone, "yyyy-MM-dd");
+  const raw = String(value ?? "").trim();
+  const isoDate = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
+  if (isoDate) return isoDate[1];
+  const skDate = /^(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})$/.exec(raw);
+  if (skDate) return skDate[3] + "-" + skDate[2].padStart(2, "0") + "-" + skDate[1].padStart(2, "0");
+  const monthYear = /^(\d{1,2})\/(\d{2}|\d{4})$/.exec(raw);
+  if (monthYear) {
+    const year = monthYear[2].length === 2 ? "20" + monthYear[2] : monthYear[2];
+    return year + "-" + monthYear[1].padStart(2, "0") + "-01";
+  }
+  return raw.slice(0, 10);
+}
+
+function comparablePrice(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return "";
+  const normalized = String(value).replace(/[\s\u00a0€]/g, "").replace(",", ".");
+  const number = Number(normalized);
+  return Number.isFinite(number) ? String(number) : normalized;
+}
+
 function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedCustomerRowsById, expectedIds) {
   const sheet = workenaSheet();
   const data = sheet.getDataRange().getValues();
@@ -243,7 +265,7 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedCustomerR
     }
   }
   if (expectedIds.length !== existingCustomerIds.size || expectedIds.some((id) => !existingCustomerIds.has(String(id)))) {
-    throw new Error("Tabuľka sa počas synchronizácie zmenila. Údaje neboli prepísané; spustite synchronizáciu znova.");
+    throw new Error("Tabuľka sa počas synchronizácie zmenila (počet alebo ID zákazníckych riadkov nesúhlasí). Údaje neboli prepísané; spustite synchronizáciu znova.");
   }
   if (expectedIds.length !== Object.keys(expectedCustomerRowsById).length || expectedIds.some((id) => !expectedCustomerRowsById[id])) {
     throw new Error("Apps Script nemá aktuálny kód na bezpečné porovnanie riadkov. Skopírujte nový skript z Workeny a nasaďte novú verziu.");
@@ -253,7 +275,7 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedCustomerR
     if (rowIndex === undefined) throw new Error("Tabuľka sa počas synchronizácie zmenila (riadok bol odstránený). Skúste synchronizovať znova.");
     const expectedRow = expectedCustomerRowsById[id];
     const actualRow = data[rowIndex];
-    const matchesExpected = [
+    const mismatchedField = [
       ["customer_date", indexes.customer_date],
       ["full_name", indexes.full_name],
       ["location", indexes.location],
@@ -262,27 +284,21 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedCustomerR
       ["quote_sent_date", indexes.quote_sent_date],
       ["contact_details", indexes.contact_details],
       ["estimated_price", indexes.estimated_price],
-    ].every(([field, column]) => {
+    ].find(([field, column]) => {
       const actual = actualRow[column];
       const expected = expectedRow[field];
       if (field === "customer_date" || field === "quote_sent_date") {
-        const actualDate = actual instanceof Date
-          ? Utilities.formatDate(actual, spreadsheetTimeZone, "yyyy-MM-dd")
-          : String(actual ?? "").trim().slice(0, 10);
-        const expectedDate = String(expected ?? "").trim().slice(0, 10);
-        return actualDate === expectedDate;
+        return comparableDate(actual, spreadsheetTimeZone) !== comparableDate(expected, spreadsheetTimeZone);
       }
       if (field === "estimated_price") {
-        const actualPrice = String(actual ?? "").trim();
-        const expectedPrice = expected === null || expected === undefined ? "" : String(expected).trim();
-        return actualPrice === expectedPrice
-          || actualPrice !== "" && expectedPrice !== "" && Number(actualPrice) === Number(expectedPrice);
+        return comparablePrice(actual) !== comparablePrice(expected);
       }
-      return String(actual ?? "").trim() === String(expected ?? "").trim();
+      return String(actual ?? "").trim() !== String(expected ?? "").trim();
     });
     const actualStatus = statusFromCells(actualRow, indexes);
-    if (!matchesExpected || actualStatus !== String(expectedRow.status ?? "")) {
-      throw new Error("Tabuľka sa počas synchronizácie zmenila. Údaje neboli prepísané; spustite synchronizáciu znova.");
+    if (mismatchedField) throw new Error("Tabuľka sa počas synchronizácie zmenila (riadok " + (rowIndex + 1) + ", pole " + mismatchedField[0] + "). Údaje neboli prepísané; spustite synchronizáciu znova.");
+    if (actualStatus !== String(expectedRow.status ?? "")) {
+      throw new Error("Tabuľka sa počas synchronizácie zmenila (riadok " + (rowIndex + 1) + ", pole stav). Údaje neboli prepísané; spustite synchronizáciu znova.");
     }
   });
   const rowsById = new Map(rows.map((customer) => [String(customer.id), customer]));
