@@ -26,25 +26,93 @@ const WORKENA_FIELDS = [
   "status",
   "updated_at",
 ];
+const WORKENA_HEADER_ALIASES = {
+  id: ["_workena_id"],
+  customer_date: ["Dátum", "Date"],
+  full_name: ["Meno", "Meno zákazníka", "Zákazník", "Full name"],
+  location: ["Lokalita", "Miesto", "Location"],
+  lead_source: ["Zdroj dopytu", "Odkiaľ prišiel dopyt", "Odkiaľ prišiel dopyt?"],
+  product: ["Produkt", "Produkty"],
+  quote_sent_date: ["CP poslaná dňa", "Ponuka poslaná dňa", "Quote sent date"],
+  contact_details: ["Kontaktné údaje", "Kontakt", "Contact details"],
+  estimated_price: ["Približná cena", "Cca bez DPH", "Cena bez DPH", "Estimated price"],
+  status: ["Stav", "Status"],
+  approved: ["Schválená", "Schvalena"],
+  rejected: ["Zamietnutá", "Zamietnuta"],
+  no_response: ["Bez odpovede"],
+  updated_at: ["_workena_updated_at"],
+};
+
+function normalizedHeader(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function headerMap(headers) {
+  const normalized = headers.map(normalizedHeader);
+  const find = (aliases) => {
+    const aliasSet = aliases.map(normalizedHeader);
+    return normalized.findIndex((header) => aliasSet.includes(header));
+  };
+  const indexes = {};
+  Object.keys(WORKENA_HEADER_ALIASES).forEach((field) => {
+    indexes[field] = find(WORKENA_HEADER_ALIASES[field]);
+  });
+  const missing = ["customer_date", "full_name", "location", "lead_source", "product", "quote_sent_date", "contact_details", "estimated_price"]
+    .filter((field) => indexes[field] < 0);
+  if (indexes.status < 0) {
+    ["approved", "rejected", "no_response"].filter((field) => indexes[field] < 0).forEach((field) => missing.push(WORKENA_HEADER_ALIASES[field][0]));
+  }
+  if (indexes.id < 0) missing.push("_workena_id");
+  if (indexes.updated_at < 0) missing.push("_workena_updated_at");
+  if (missing.length) throw new Error("V hárku Workena chýbajú potrebné stĺpce: " + missing.join(", "));
+  return indexes;
+}
+
+function isChecked(value) {
+  return value === true || String(value).trim().toLowerCase() === "true";
+}
+
+function statusFromCells(cells, indexes) {
+  if (indexes.status >= 0) {
+    const value = String(cells[indexes.status] || "").trim().toLowerCase();
+    if (!value) return "NO_RESPONSE";
+    if (["approved", "schválená", "schvalena"].includes(value)) return "APPROVED";
+    if (["rejected", "zamietnutá", "zamietnuta"].includes(value)) return "REJECTED";
+    if (["no_response", "bez odpovede"].includes(value)) return "NO_RESPONSE";
+    throw new Error("Neznámy stav zákazníka „" + value + "“. Použite Schválená, Zamietnutá alebo Bez odpovede.");
+  }
+  const checked = [
+    indexes.approved >= 0 && isChecked(cells[indexes.approved]) ? "APPROVED" : "",
+    indexes.rejected >= 0 && isChecked(cells[indexes.rejected]) ? "REJECTED" : "",
+    indexes.no_response >= 0 && isChecked(cells[indexes.no_response]) ? "NO_RESPONSE" : "",
+  ].filter(Boolean);
+  if (checked.length > 1) throw new Error("V jednom riadku zaškrtnite iba jeden stav zákazníka.");
+  return checked[0] || "NO_RESPONSE";
+}
 
 function setupWorkena() {
   const spreadsheet = SpreadsheetApp.getActive();
   if (!spreadsheet) throw new Error("Otvorte tento skript cez Rozšírenia → Apps Script priamo v Google Tabuľke.");
   PropertiesService.getScriptProperties().setProperty("WORKENA_SPREADSHEET_ID", spreadsheet.getId());
-  const sheet = workenaSheet();
+  const sheet = spreadsheet.getSheetByName(WORKENA_SHEET_NAME) || spreadsheet.getActiveSheet();
+  if (sheet.getName() !== WORKENA_SHEET_NAME) sheet.setName(WORKENA_SHEET_NAME);
   const headers = sheet.getLastRow() ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0] : [];
   if (!headers.length || headers.every((value) => !value)) {
     sheet.getRange(1, 1, 1, WORKENA_HEADERS.length).setValues([WORKENA_HEADERS]);
-    sheet.setFrozenRows(1);
-    sheet.hideColumns(1);
-    sheet.hideColumns(WORKENA_HEADERS.length);
-  } else {
-    const missing = WORKENA_HEADERS.filter((header) => !headers.includes(header));
-    if (missing.length) throw new Error("V tabuľke chýbajú stĺpce: " + missing.join(", "));
-    sheet.setFrozenRows(1);
-    sheet.hideColumns(headers.indexOf("_workena_id") + 1);
-    sheet.hideColumns(headers.indexOf("_workena_updated_at") + 1);
   }
+  let currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  if (currentHeaders.findIndex((header) => normalizedHeader(header) === normalizedHeader("_workena_id")) < 0) {
+    currentHeaders.push("_workena_id");
+    sheet.getRange(1, currentHeaders.length).setValue("_workena_id");
+  }
+  if (currentHeaders.findIndex((header) => normalizedHeader(header) === normalizedHeader("_workena_updated_at")) < 0) {
+    currentHeaders.push("_workena_updated_at");
+    sheet.getRange(1, currentHeaders.length).setValue("_workena_updated_at");
+  }
+  const indexes = headerMap(currentHeaders);
+  sheet.setFrozenRows(1);
+  sheet.hideColumns(indexes.id + 1);
+  sheet.hideColumns(indexes.updated_at + 1);
   ScriptApp.getProjectTriggers()
     .filter((trigger) => ["onEditWorkena", "onChangeWorkena"].includes(trigger.getHandlerFunction()))
     .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
@@ -114,9 +182,9 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedUpdatedAt
   const sheet = workenaSheet();
   const data = sheet.getDataRange().getValues();
   const headers = data[0].map(String);
-  const idColumn = headers.indexOf("_workena_id");
-  const updatedColumn = headers.indexOf("_workena_updated_at");
-  if (idColumn < 0) throw new Error("Spustite najskôr funkciu setupWorkena().");
+  const indexes = headerMap(headers);
+  const idColumn = indexes.id;
+  const updatedColumn = indexes.updated_at;
   const existingRows = new Map();
   for (let index = 1; index < data.length; index += 1) {
     const id = String(data[index][idColumn] || "").trim();
@@ -163,13 +231,17 @@ function applyChanges(rows, deleteIds, acknowledgedDeletedIds, expectedUpdatedAt
 }
 
 function valuesToCells(customer, headers, previousValues) {
+  const indexes = headerMap(headers);
   return headers.map((header, index) => {
-    const fieldIndex = WORKENA_HEADERS.indexOf(header);
-    if (fieldIndex < 0) return previousValues ? previousValues[index] : "";
-    if (WORKENA_FIELDS[fieldIndex] === "status") {
+    const field = WORKENA_FIELDS.find((candidate) => indexes[candidate] === index);
+    if (field === "status" || index === indexes.approved || index === indexes.rejected || index === indexes.no_response) {
+      if (index === indexes.approved) return customer.status === "APPROVED";
+      if (index === indexes.rejected) return customer.status === "REJECTED";
+      if (index === indexes.no_response) return customer.status === "NO_RESPONSE";
       return customer.status === "APPROVED" ? "Schválená" : customer.status === "REJECTED" ? "Zamietnutá" : "Bez odpovede";
     }
-    return customer[WORKENA_FIELDS[fieldIndex]] ?? "";
+    if (!field) return previousValues ? previousValues[index] : "";
+    return customer[field] ?? "";
   });
 }
 
@@ -178,13 +250,17 @@ function readRows() {
   const data = sheet.getDataRange().getValues();
   if (!data.length) return [];
   const headers = data[0].map(String);
-  const indexes = WORKENA_HEADERS.map((header) => headers.indexOf(header));
-  if (indexes.some((index) => index < 0)) throw new Error("Spustite najskôr funkciu setupWorkena().");
+  const indexes = headerMap(headers);
   const timeZone = sheet.getParent().getSpreadsheetTimeZone();
   return data.slice(1).map((cells, rowIndex) => {
     const row = {};
-    WORKENA_FIELDS.forEach((field, index) => {
-      let value = cells[indexes[index]];
+    WORKENA_FIELDS.forEach((field) => {
+      if (field === "status") {
+        row[field] = statusFromCells(cells, indexes);
+        return;
+      }
+      const index = indexes[field];
+      let value = index >= 0 ? cells[index] : "";
       if ((field === "customer_date" || field === "quote_sent_date") && value instanceof Date) {
         value = Utilities.formatDate(value, timeZone, "yyyy-MM-dd");
       } else if (value instanceof Date) {
@@ -192,15 +268,15 @@ function readRows() {
       }
       row[field] = value === null || value === undefined ? "" : value;
     });
-    const hasData = WORKENA_FIELDS.slice(1, -1).some((field) => String(row[field] || "").trim() !== "");
+    const hasData = WORKENA_FIELDS.slice(1, -2).some((field) => String(row[field] || "").trim() !== "");
     if (hasData && !row.id) {
       row.id = Utilities.getUuid();
       row.updated_at = new Date().toISOString();
-      sheet.getRange(rowIndex + 2, indexes[0] + 1).setValue(row.id);
-      sheet.getRange(rowIndex + 2, indexes[indexes.length - 1] + 1).setValue(row.updated_at);
+      sheet.getRange(rowIndex + 2, indexes.id + 1).setValue(row.id);
+      sheet.getRange(rowIndex + 2, indexes.updated_at + 1).setValue(row.updated_at);
     }
     return row;
-  }).filter((row) => row.id || WORKENA_FIELDS.slice(1, -1).some((field) => row[field] !== ""));
+  }).filter((row) => row.id || WORKENA_FIELDS.slice(1, -2).some((field) => row[field] !== ""));
 }
 
 function captureRemovedRows(fallbackTimestamp, updateKnownIds = true) {
@@ -268,7 +344,9 @@ function workenaSheet() {
   const spreadsheetId = PropertiesService.getScriptProperties().getProperty("WORKENA_SPREADSHEET_ID");
   if (!spreadsheetId) throw new Error("Spustite najskôr funkciu setupWorkena() z editora Google Tabuľky.");
   const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-  return spreadsheet.getSheetByName(WORKENA_SHEET_NAME) || spreadsheet.insertSheet(WORKENA_SHEET_NAME);
+  const sheet = spreadsheet.getSheetByName(WORKENA_SHEET_NAME);
+  if (!sheet) throw new Error("Hárok Workena sa nenašiel. Spustite znovu funkciu setupWorkena() z editora Google Tabuľky.");
+  return sheet;
 }
 
 function output(value) {

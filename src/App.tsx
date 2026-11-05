@@ -3659,12 +3659,13 @@ export function App() {
           <details className="customer-sheets-guide" open={!googleSheetsConnection?.connected}>
             <summary>Návod na prepojenie Google Tabuľky</summary>
             <ol>
-              <li>V Google Tabuľke otvorte <strong>Rozšírenia → Apps Script</strong>.</li>
-              <li>Nižšie kliknite na <strong>Vytvoriť bezpečný kľúč a skript</strong>, skopírujte skript, vložte ho do editora a uložte.</li>
-              <li>Spustite <code>setupWorkena</code> a povoľte prístup. Potom zvoľte <strong>Nasadiť → Nové nasadenie → Webová aplikácia</strong>: „Spúšťať ako: Ja“, „Kto má prístup: Všetci (Anyone)“. Kliknite <strong>Nasadiť</strong> a povoľte prístup.</li>
+              <li>Otvorte svoju existujúcu Google Tabuľku a kliknite na <strong>Rozšírenia → Apps Script</strong>.</li>
+              <li>Nižšie kliknite na <strong>Vytvoriť bezpečný kľúč a skript</strong>, skopírujte skript, vložte ho do editora a uložte. Ak ste už skript vložili, nahraďte celý starý kód novým.</li>
+              <li>Spustite <code>setupWorkena</code> a povoľte prístup. Skript použije aktuálny hárok s vašimi zákazníkmi a premenuje ho na „Workena“; údaje nemažte. Potom zvoľte <strong>Nasadiť → Nové nasadenie → Webová aplikácia</strong>: „Spúšťať ako: Ja“, „Kto má prístup: Všetci (Anyone)“. Kliknite <strong>Nasadiť</strong> a povoľte prístup.</li>
               <li>Skopírujte <strong>URL webovej aplikácie</strong> (končí na <code>/exec</code>), vložte ju nižšie a kliknite na <strong>Prepojiť tabuľku</strong>. Potom už stačí kliknúť na <strong>Synchronizovať</strong>.</li>
             </ol>
             <p className="muted">Ak ste webovú aplikáciu už nasadili, otvorte <strong>Nasadiť → Spravovať nasadenia → Upraviť</strong> (ceruzka), nastavte prístup na <strong>Všetci (Anyone)</strong>, zvoľte <strong>Nová verzia</strong> a znova kliknite na <strong>Nasadiť</strong>. Bez tohto nastavenia Google vráti chybu 401. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.</p>
+            <p className="muted">Existujúce stĺpce „Dátum“, „Meno“, „Lokalita“, „Odkiaľ prišiel dopyt“, „Produkty“, dátum CP, kontakty, „Cca bez DPH“ a zaškrtávacie polia stavov sa rozpoznajú. Pomocné ID stĺpce pridá skript a skryje ich. „Poznámky“ zostanú v tabuľke zachované, ale nezobrazia sa vo Workene.</p>
             <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Zmeny a vymazania sa prenesú podľa času poslednej úpravy. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
             <div className="customer-sheets-setup">
               <button className="button button-outline button-small" disabled={googleSheetsBusy} onClick={() => void createGoogleSheetsScript()}>
