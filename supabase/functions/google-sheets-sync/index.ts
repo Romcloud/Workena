@@ -192,7 +192,7 @@ function mergeCustomerValues(...sources: PartialCustomerValues[]): CustomerValue
   const defaults: CustomerValues = {
     customer_date: "",
     full_name: "",
-    location: "",
+    location: "Neuvedené",
     lead_source: "",
     product: "",
     quote_sent_date: null,
@@ -253,7 +253,7 @@ function validateCustomerValues(values: CustomerValues) {
   if (!values.customer_date.trim()) throw new Error("Dátum zákazníka je povinný.");
   normalizedDate(values.customer_date);
   if (fullName.length < 2 || fullName.length > 160) throw new Error("Meno zákazníka musí mať 2 až 160 znakov.");
-  if (location.length < 2 || location.length > 250) throw new Error(`Zákazník ${fullName}: lokalita musí mať 2 až 250 znakov.`);
+  if (location.length > 250) throw new Error(`Zákazník ${fullName}: lokalita môže mať najviac 250 znakov.`);
   if (!leadSource || leadSource.length > 160) throw new Error(`Zákazník ${fullName}: zdroj dopytu je povinný (max. 160 znakov).`);
   if (!product || product.length > 200) throw new Error(`Zákazník ${fullName}: produkt je povinný (max. 200 znakov).`);
   if (contactDetails.length < 2 || contactDetails.length > 400) throw new Error(`Zákazník ${fullName}: kontakt musí mať 2 až 400 znakov.`);
