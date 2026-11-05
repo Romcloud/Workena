@@ -365,6 +365,7 @@ export function App() {
   const [tripDistanceSource, setTripDistanceSource] = useState<"MAP" | "MANUAL" | "MAP_EDITED">("MANUAL");
   const [tripMapBusy, setTripMapBusy] = useState(false);
   const [tripNotice, setTripNotice] = useState("");
+  const [showTripForm, setShowTripForm] = useState(false);
   const [tripStops, setTripStops] = useState<string[]>([]);
   const [tripReturnDestination, setTripReturnDestination] = useState("");
   const [tripDifferentReturn, setTripDifferentReturn] = useState(false);
@@ -3210,6 +3211,7 @@ export function App() {
       setTripReturnDestination("");
       setTripDifferentReturn(false);
       setTripNotice("Jazda bola zaznamenaná.");
+      setShowTripForm(false);
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -4344,9 +4346,14 @@ export function App() {
     <section className="content-page">
       <header className="dashboard-title-row">
         <div><span className="eyebrow">CESTOVNÝ VÝKAZ</span><h1>Výkaz jázd</h1><p>Vzdialenosť vypočítaná po cestách na Slovensku; kilometre možno upraviť ručne.</p></div>
+        <button className="button button-primary" onClick={() => { setError(""); setTripNotice(""); setShowTripForm(true); }}><Plus size={16} /> Zaznamenať jazdu</button>
       </header>
-      <section className="panel trip-create-panel">
-        <div className="panel-heading"><div><h2><MapPin size={17} /> Zaznamenať jazdu</h2><p>Vypočítame cestnú vzdialenosť z miesta odchodu a cieľa.</p></div></div>
+      {tripNotice && <p className="invite-success" role="status">{tripNotice}</p>}
+      {showTripForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy && !tripMapBusy) setShowTripForm(false);
+      }}>
+      <section className="panel trip-create-panel work-order-create-modal" role="dialog" aria-modal="true" aria-labelledby="trip-form-title">
+        <div className="modal-heading"><div><span className="eyebrow">CESTOVNÝ VÝKAZ</span><h2 id="trip-form-title"><MapPin size={17} /> Zaznamenať jazdu</h2><p>Vypočítame cestnú vzdialenosť z miesta odchodu a cieľa.</p></div><button type="button" className="logout-button" aria-label="Zavrieť formulár jazdy" disabled={busy || tripMapBusy} onClick={() => setShowTripForm(false)}><X size={18} /></button></div>
         <form className="form-stack trip-form" onSubmit={(event) => void saveVehicleTrip(event)}>
           <div className="form-grid">
             <label className="field"><span>Dátum jazdy</span><input type="date" name="trip_date" defaultValue={localDateKey(new Date().toISOString())} required /></label>
@@ -4426,10 +4433,10 @@ export function App() {
           </div>
           <p className="trip-map-notice">Pri výpočte odošleme zadané adresy službám OpenStreetMap Nominatim a OSRM na vyhľadanie miesta a cestnej trasy. Ak mapa zlyhá, kilometre možno zadať alebo opraviť ručne. Mapové údaje: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>.</p>
           {error && <p className="form-error" role="alert">{error}</p>}
-          {tripNotice && <p className="invite-success" role="status">{tripNotice}</p>}
-          <div className="form-actions"><button className="button button-primary" disabled={busy || tripMapBusy}><Plus size={15} />{busy ? "Ukladám…" : "Uložiť jazdu"}</button></div>
+          <div className="form-actions"><button type="button" className="button button-quiet" disabled={busy || tripMapBusy} onClick={() => setShowTripForm(false)}>Zrušiť</button><button className="button button-primary" disabled={busy || tripMapBusy}><Plus size={15} />{busy ? "Ukladám…" : "Uložiť jazdu"}</button></div>
         </form>
       </section>
+      </div>}
       <section className="records-section">
         <div className="section-title-row">
           <div><h2><Clock3 size={17} /> Moje jazdy</h2><p>Spolu za mesiac: <strong>{hoursLabel(monthVehicleTrips.reduce((sum, trip) => sum + Number(trip.distance_km), 0))} km</strong></p></div>
