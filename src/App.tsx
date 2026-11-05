@@ -2160,11 +2160,44 @@ export function App() {
     if (!client || !window.confirm(`Naozaj chcete vymazať zákazníka „${customer.full_name}“?`)) return;
     setBusy(true);
     setError("");
+    setNotice("");
+    setGoogleSheetsError("");
+    setGoogleSheetsMessage("");
     try {
       const { error: deleteError } = await client.from("customers").delete().eq("id", customer.id).select("id").single();
       if (deleteError) throw deleteError;
       await refreshCustomers();
-      setNotice("Zákazník bol vymazaný.");
+      const shouldSyncCustomerToSheet = isCompanyOwner || googleSheetsConnection?.connected;
+      if (!shouldSyncCustomerToSheet || !activeCompanyId) {
+        setNotice("Zákazník bol vymazaný z Workeny.");
+        return;
+      }
+
+      setGoogleSheetsBusy(true);
+      try {
+        const { data: syncData, error: syncError } = await client.functions.invoke<{ syncedAt: string; deletedInSheet: number }>(
+          "google-sheets-sync",
+          {
+            body: {
+              action: "sync",
+              companyId: activeCompanyId,
+              ...(isCompanyOwner && customer.salesperson_id !== session?.user.id
+                ? { salespersonId: customer.salesperson_id }
+                : {}),
+            },
+          },
+        );
+        if (syncError) throw new Error(await functionErrorText(syncError));
+        if (!syncData?.syncedAt) throw new Error("Synchronizácia nevrátila potvrdený výsledok.");
+        setGoogleSheetsConnection((current) => current ? { ...current, lastSyncAt: syncData.syncedAt } : current);
+        setGoogleSheetsMessage(`Zákazník bol vymazaný. Vymazané z Google Tabuľky: ${syncData.deletedInSheet}.`);
+        setNotice("Zákazník bol vymazaný z Workeny aj synchronizovaný s Google Tabuľkou.");
+      } catch (reason: unknown) {
+        setGoogleSheetsError(googleSheetsErrorMessage(errorText(reason)));
+        setNotice("Zákazník bol vymazaný z Workeny, ale zmenu sa nepodarilo synchronizovať s Google Tabuľkou.");
+      } finally {
+        setGoogleSheetsBusy(false);
+      }
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -3687,7 +3720,7 @@ export function App() {
           <div className="customer-sheets-heading">
             <div><span className="eyebrow">GOOGLE TABUĽKY</span><h2><FileSpreadsheet size={18} /> Synchronizácia zákazníkov</h2>
               <p>{googleSheetsConnection?.connected
-                ? `Tabuľka je prepojená${googleSheetsConnection.lastSyncAt ? ` · naposledy synchronizovaná ${new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(googleSheetsConnection.lastSyncAt))}` : ""}. Noví zákazníci sa pridajú automaticky; ostatné zmeny synchronizujte ručne.`
+                ? `Tabuľka je prepojená${googleSheetsConnection.lastSyncAt ? ` · naposledy synchronizovaná ${new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(googleSheetsConnection.lastSyncAt))}` : ""}. Noví zákazníci a vymazania z Workeny sa synchronizujú automaticky; úpravy a zmeny v tabuľke synchronizujte ručne.`
                 : "Prepojte svoju tabuľku. Synchronizácia zmien aj vymazaní sa spúšťa ručne."}</p>
             </div>
             <div className="calendar-google-actions">
@@ -3709,7 +3742,7 @@ export function App() {
             <p className="muted">Existujúce stĺpce „Dátum“, „Meno“, „Lokalita“, „Odkiaľ prišiel dopyt“, „Produkty“, dátum CP, kontakty, „Cca bez DPH“ a zaškrtávacie polia stavov sa rozpoznajú. Pomocné ID stĺpce pridá skript a skryje ich. „Poznámky“ zostanú v tabuľke zachované, ale nezobrazia sa vo Workene.</p>
             <p className="muted">Dátum môže byť vo formáte RRRR-MM-DD, D.M.RRRR alebo M/RR (napríklad „5/26“ sa číta ako máj 2026).</p>
             <p className="muted">Prázdne bunky sa pri synchronizácii považujú za „bez zmeny“, okrem ceny: prázdna cena alebo hodnota „--“ sa vo Workene uloží ako „bez ceny“. Ak chcete odstrániť zákazníka, vymažte celý riadok v tabuľke.</p>
-            <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Zmeny a vymazania sa prenesú podľa času poslednej úpravy. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
+            <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Nových zákazníkov a vymazania vo Workene prenášame automaticky; ostatné zmeny synchronizujte tlačidlom. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek, a potom spustite synchronizáciu. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
             <div className="customer-sheets-setup">
               <button className="button button-outline button-small" disabled={googleSheetsBusy} onClick={() => void createGoogleSheetsScript()}>
                 <Copy size={13} /> {googleSheetsConnection?.configured ? "Vytvoriť nový kľúč a skript" : "Vytvoriť bezpečný kľúč a skript"}
