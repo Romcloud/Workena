@@ -4071,11 +4071,11 @@ export function App() {
       title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
       onClick={() => setSelectedCalendarOrder(item.order)}
     >{calendarDisplayMode === "DETAIL" ? <>
-      <span className="calendar-order-heading"><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-other"}`} />{calendarOrderTime(item.order)}</span>
+      <span className="calendar-order-heading"><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-install"}`} />{calendarOrderTime(item.order)}</span>
       <strong className="calendar-order-title">{item.order.title}</strong>
       <span className="calendar-order-location"><MapPin size={11} /> {item.order.address}</span>
       {renderCalendarAssignees(item.order)}
-    </> : <><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-other"}`} />{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</>}</button> : item.kind === "google" ? <button
+    </> : <><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-install"}`} />{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</>}</button> : item.kind === "google" ? <button
       className={`calendar-google-event ${calendarDisplayMode === "DETAIL" ? "calendar-google-event-detail" : ""}`}
       key={`google-${day}-${item.event.id}`}
       title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
@@ -4198,7 +4198,7 @@ export function App() {
           </div>}
           <div className="calendar-legend" aria-label="Legenda typov zákaziek">
             <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-measure" />Meranie</span>
-            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-other" />Ostatné zákazky</span>
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-install" />Montáž</span>
           </div>
           <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""} ${calendarDisplayMode === "DETAIL" ? "calendar-detail-mode" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
@@ -4217,7 +4217,7 @@ export function App() {
                   <span>{new Intl.DateTimeFormat("sk-SK", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${day}T12:00:00`))}</span>
                 </header>
                 <div className="calendar-agenda-items">{items.map((item) => item.kind === "order" ? <button
-                  className={`calendar-agenda-item calendar-agenda-order ${item.order.status === "MEASURED" ? "calendar-agenda-measure" : "calendar-agenda-other"}`}
+                  className={`calendar-agenda-item calendar-agenda-order ${item.order.status === "MEASURED" ? "calendar-agenda-measure" : "calendar-agenda-install"}`}
                   style={getCalendarEmployeeColor(item.userId)}
                   key={`agenda-order-${item.order.id}-${item.userId}`}
                   onClick={() => setSelectedCalendarOrder(item.order)}
