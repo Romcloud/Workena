@@ -396,7 +396,11 @@ export function App() {
   const [expandedDashboardOrderId, setExpandedDashboardOrderId] = useState<string | null>(null);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
   const [calendarEmployeeFilter, setCalendarEmployeeFilter] = useState("ALL");
+  const [calendarDisplayMode, setCalendarDisplayMode] = useState<"COMPACT" | "DETAIL">(() => (
+    window.localStorage.getItem("workena-calendar-display-mode") === "DETAIL" ? "DETAIL" : "COMPACT"
+  ));
   const [selectedCalendarOrder, setSelectedCalendarOrder] = useState<WorkOrder | null>(null);
+  const [selectedCalendarAbsence, setSelectedCalendarAbsence] = useState<AbsenceRequest | null>(null);
   const [selectedGoogleCalendarEvent, setSelectedGoogleCalendarEvent] = useState<GoogleCalendarDisplayEvent | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingAttendanceShift, setEditingAttendanceShift] = useState<{ id: string; startedAt: string; endedAt: string } | null>(null);
@@ -452,6 +456,10 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem("workena-page", page);
   }, [page]);
+
+  useEffect(() => {
+    window.localStorage.setItem("workena-calendar-display-mode", calendarDisplayMode);
+  }, [calendarDisplayMode]);
 
   useEffect(() => {
     const updateAttendanceClock = () => setAttendanceNow(Date.now());
@@ -4022,30 +4030,73 @@ export function App() {
         }),
       ].sort((left, right) => left.sortAt - right.sortAt);
     };
+    const calendarAssignees = (order: WorkOrder) => {
+      const activeIds = (order.assignees ?? [])
+        .filter((assignment) => !assignment.declined_at && !assignment.reassigned_at)
+        .map((assignment) => assignment.user_id);
+      const userIds = [...new Set(activeIds.length ? activeIds : [order.assignee_id])];
+      return userIds.map((userId) => roster.find((member) => member.user_id === userId)).filter((member): member is Membership => Boolean(member));
+    };
+    const calendarInitials = (name: string) => name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toLocaleUpperCase("sk-SK") ?? "")
+      .join("");
+    const renderCalendarAssignees = (order: WorkOrder) => {
+      const assignees = calendarAssignees(order);
+      if (!assignees.length) return null;
+      return <span className="calendar-assignees" aria-label={`Priradení: ${assignees.map((member) => member.full_name || member.email).join(", ")}`}>
+        {assignees.slice(0, 3).map((member) => {
+          const name = member.full_name || member.email;
+          return <span className="calendar-assignee-avatar" key={member.user_id} title={name}>{calendarInitials(name)}</span>;
+        })}
+        {assignees.length > 3 && <span className="calendar-assignee-more">+{assignees.length - 3}</span>}
+      </span>;
+    };
+    const calendarOrderTime = (order: WorkOrder) => order.time_to_arrange
+      ? "Čas treba dohodnúť"
+      : order.starts_at
+        ? `${order.starts_at.slice(0, 5)}${order.ends_at ? ` – ${order.ends_at.slice(0, 5)}` : ""}`
+        : "Bez času";
     const calendarDaysWithEvents = calendarCells.flatMap((day) => {
       if (!day) return [];
       const items = getCalendarDayItems(day);
       return items.length ? [{ day, items }] : [];
     });
     const renderCalendarItem = (item: ReturnType<typeof getCalendarDayItems>[number], day: string) => item.kind === "order" ? <button
-      className="calendar-order"
+      className={`calendar-order ${calendarDisplayMode === "DETAIL" ? "calendar-order-detail" : ""}`}
       style={getCalendarEmployeeColor(item.userId)}
       key={`order-${item.order.id}-${item.userId}`}
       title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
       onClick={() => setSelectedCalendarOrder(item.order)}
-    >{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</button> : item.kind === "google" ? <button
-      className="calendar-google-event"
+    >{calendarDisplayMode === "DETAIL" ? <>
+      <span className="calendar-order-heading"><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-other"}`} />{calendarOrderTime(item.order)}</span>
+      <strong className="calendar-order-title">{item.order.title}</strong>
+      <span className="calendar-order-location"><MapPin size={11} /> {item.order.address}</span>
+      {renderCalendarAssignees(item.order)}
+    </> : <><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-other"}`} />{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</>}</button> : item.kind === "google" ? <button
+      className={`calendar-google-event ${calendarDisplayMode === "DETAIL" ? "calendar-google-event-detail" : ""}`}
       key={`google-${day}-${item.event.id}`}
       title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
       onClick={() => setSelectedGoogleCalendarEvent(item.event)}
-    >{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</button> : <div
-      className="calendar-absence"
+    >{calendarDisplayMode === "DETAIL" ? <>
+      <span className="calendar-order-heading">{item.continues ? "Pokračuje" : googleCalendarEventTime(item.event)}</span>
+      <strong className="calendar-order-title">{item.event.summary || "Udalosť Google Kalendára"}</strong>
+      {item.event.location && <span className="calendar-order-location"><MapPin size={11} /> {item.event.location}</span>}
+    </> : <>{item.continues ? "Pokračuje · " : `${googleCalendarEventTime(item.event)} · `}{item.event.summary || "Udalosť Google Kalendára"}</>}</button> : <button
+      className={`calendar-absence ${calendarDisplayMode === "DETAIL" ? "calendar-absence-detail" : ""}`}
       key={`absence-${day}-${item.request.id}`}
       title={`Schválená neprítomnosť · ${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${ABSENCE_TYPE_LABELS[item.request.type]}`}
       style={getCalendarEmployeeColor(item.request.user_id)}
+      onClick={() => setSelectedCalendarAbsence(item.request)}
     ><strong>{item.request.start_time && item.request.end_time
         ? `${item.request.start_time.slice(0, 5)}–${item.request.end_time.slice(0, 5)}`
-        : "Celý deň"}</strong>{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{ABSENCE_TYPE_LABELS[item.request.type]}</div>;
+        : "Celý deň"}</strong>{calendarDisplayMode === "DETAIL" ? <>
+        <span className="calendar-order-title">{ABSENCE_TYPE_LABELS[item.request.type]}</span>
+        <span className="calendar-order-location">{item.member?.full_name || item.member?.email || "Zamestnanec"} · Schválená neprítomnosť</span>
+        {item.request.note && <span className="calendar-order-location">{item.request.note}</span>}
+      </> : <>{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{ABSENCE_TYPE_LABELS[item.request.type]}</>}</button>;
     return (
       <section className="content-page">
         <header className="dashboard-title-row">
@@ -4092,6 +4143,10 @@ export function App() {
           <div className="section-title-row">
             <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky a schválené neprítomnosti v mesiaci.</p></div>
             <div className="calendar-heading-actions">
+              <div className="calendar-display-toggle" role="group" aria-label="Zobrazenie kalendára">
+                <button type="button" className={`button button-small ${calendarDisplayMode === "COMPACT" ? "button-primary" : "button-outline"}`} aria-pressed={calendarDisplayMode === "COMPACT"} onClick={() => setCalendarDisplayMode("COMPACT")}>Kompaktné</button>
+                <button type="button" className={`button button-small ${calendarDisplayMode === "DETAIL" ? "button-primary" : "button-outline"}`} aria-pressed={calendarDisplayMode === "DETAIL"} onClick={() => setCalendarDisplayMode("DETAIL")}>Detailné</button>
+              </div>
               <button className="button button-outline button-small" onClick={() => setCalendarExpanded((expanded) => !expanded)}>{calendarExpanded ? "Zmenšiť kalendár" : "Roztiahnuť kalendár"}</button>
               <div className="attendance-month-switch">
               <button className="employee-hours-toggle" aria-label="Predchádzajúci mesiac" onClick={() => {
@@ -4141,7 +4196,11 @@ export function App() {
           {calendarAbsences.length > 0 && <div className="calendar-legend" aria-label="Legenda neprítomností">
             <span className="calendar-legend-item"><i className="calendar-absence-swatch" />Schválená neprítomnosť</span>
           </div>}
-          <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""}`} role="grid" aria-label="Kalendár zákaziek">
+          <div className="calendar-legend" aria-label="Legenda typov zákaziek">
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-measure" />Meranie</span>
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-other" />Ostatné zákazky</span>
+          </div>
+          <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""} ${calendarDisplayMode === "DETAIL" ? "calendar-detail-mode" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
             {calendarCells.map((day, index) => {
               const dayItems = day ? getCalendarDayItems(day) : [];
@@ -4150,7 +4209,7 @@ export function App() {
               </div>;
             })}
           </div>
-          <div className="calendar-agenda" aria-label="Udalosti kalendára zoradené podľa dňa">
+          <div className={`calendar-agenda ${calendarDisplayMode === "DETAIL" ? "calendar-detail-mode" : ""}`} aria-label="Udalosti kalendára zoradené podľa dňa">
             {calendarDaysWithEvents.length
               ? calendarDaysWithEvents.map(({ day, items }) => <section className="calendar-agenda-day" key={day}>
                 <header className="calendar-agenda-date">
@@ -4158,14 +4217,16 @@ export function App() {
                   <span>{new Intl.DateTimeFormat("sk-SK", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${day}T12:00:00`))}</span>
                 </header>
                 <div className="calendar-agenda-items">{items.map((item) => item.kind === "order" ? <button
-                  className="calendar-agenda-item calendar-agenda-order"
+                  className={`calendar-agenda-item calendar-agenda-order ${item.order.status === "MEASURED" ? "calendar-agenda-measure" : "calendar-agenda-other"}`}
                   style={getCalendarEmployeeColor(item.userId)}
                   key={`agenda-order-${item.order.id}-${item.userId}`}
                   onClick={() => setSelectedCalendarOrder(item.order)}
                 >
-                  <strong>{item.order.time_to_arrange ? "Dohodnúť čas" : item.order.starts_at ? item.order.starts_at.slice(0, 5) : "Bez času"}</strong>
+                  <strong>{calendarOrderTime(item.order)}</strong>
                   <span>{item.order.title}</span>
-                  {isCompanyOwner && <small>{item.member?.full_name || item.member?.email || "Zamestnanec"}</small>}
+                  {calendarDisplayMode === "DETAIL" && <small className="calendar-agenda-location"><MapPin size={12} /> {item.order.address}</small>}
+                  {calendarDisplayMode === "DETAIL" ? <small>{calendarAssignees(item.order).map((member) => member.full_name || member.email).join(", ") || "Bez priradeného zamestnanca"}</small>
+                    : isCompanyOwner && <small>{item.member?.full_name || item.member?.email || "Zamestnanec"}</small>}
                 </button> : item.kind === "google" ? <button
                   className="calendar-agenda-item calendar-agenda-google"
                   key={`agenda-google-${day}-${item.event.id}`}
@@ -4173,6 +4234,8 @@ export function App() {
                 >
                   <strong>{item.continues ? "Pokračuje" : googleCalendarEventTime(item.event)}</strong>
                   <span>{item.event.summary || "Udalosť Google Kalendára"}</span>
+                  {calendarDisplayMode === "DETAIL" && item.event.location && <small className="calendar-agenda-location"><MapPin size={12} /> {item.event.location}</small>}
+                  {calendarDisplayMode === "DETAIL" && item.event.description && <small>{item.event.description}</small>}
                   <small>Google Kalendár</small>
                 </button> : <div
                   className="calendar-agenda-item calendar-agenda-absence"
@@ -4184,6 +4247,7 @@ export function App() {
                     : "Celý deň"}</strong>
                   <span>{ABSENCE_TYPE_LABELS[item.request.type]}</span>
                   <small>{item.member?.full_name || item.member?.email || "Zamestnanec"} · Schválená neprítomnosť</small>
+                  {calendarDisplayMode === "DETAIL" && item.request.note && <small>{item.request.note}</small>}
                 </div>)}</div>
               </section>)
               : <p className="calendar-agenda-empty">V tomto mesiaci zatiaľ nie sú naplánované žiadne udalosti ani zákazky.</p>}
@@ -4349,8 +4413,10 @@ export function App() {
         <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-order-title">
           <div className="modal-heading"><div><span className="eyebrow">ZÁKAZKA</span><h2 id="calendar-order-title">{selectedCalendarOrder.title}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti" onClick={() => setSelectedCalendarOrder(null)}><X size={18} /></button></div>
           <p><MapPin size={15} /> {selectedCalendarOrder.address}</p>
-          <p><CalendarDays size={15} /> {dateLabel(`${selectedCalendarOrder.due_date}T12:00:00`)}{selectedCalendarOrder.time_to_arrange ? " · čas treba dohodnúť" : selectedCalendarOrder.starts_at ? ` · ${selectedCalendarOrder.starts_at.slice(0, 5)} – ${selectedCalendarOrder.ends_at?.slice(0, 5) ?? "—"}` : ""}</p>
-          <p className="work-order-description">{selectedCalendarOrder.description}</p>
+          <p><CalendarDays size={15} /> {dateLabel(`${selectedCalendarOrder.due_date}T12:00:00`)} · {calendarOrderTime(selectedCalendarOrder)}</p>
+          <p><Users size={15} /> {calendarAssignees(selectedCalendarOrder).map((member) => member.full_name || member.email).join(", ") || "Bez priradeného zamestnanca"}</p>
+          <p className="work-order-description"><strong>Poznámka / opis:</strong> {selectedCalendarOrder.description}</p>
+          <p><strong>Zákazník:</strong> V údajoch zákazky nie je uvedený.</p>
           {selectedCalendarOrder.contact_phone && <p><Phone size={15} /> {selectedCalendarOrder.contact_phone}</p>}
           <div className="work-order-actions">
             <a className="button button-outline button-small" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedCalendarOrder.address)}`} target="_blank" rel="noreferrer"><Navigation size={14} /> Navigovať</a>
@@ -4361,6 +4427,17 @@ export function App() {
             setSelectedCalendarOrder(null);
             window.setTimeout(() => document.getElementById(`work-order-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
           }}>Otvoriť zákazku</button></div>
+        </section>
+      </div>}
+      {selectedCalendarAbsence && <div className="modal-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setSelectedCalendarAbsence(null);
+      }}>
+        <section className="panel detail-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-absence-title">
+          <div className="modal-heading"><div><span className="eyebrow">SCHVÁLENÁ NEPRÍTOMNOSŤ</span><h2 id="calendar-absence-title">{ABSENCE_TYPE_LABELS[selectedCalendarAbsence.type]}</h2></div><button className="logout-button" aria-label="Zavrieť podrobnosti neprítomnosti" onClick={() => setSelectedCalendarAbsence(null)}><X size={18} /></button></div>
+          <p><CalendarDays size={15} /> {dateLabel(`${selectedCalendarAbsence.start_date}T12:00:00`)}{selectedCalendarAbsence.end_date !== selectedCalendarAbsence.start_date ? ` – ${dateLabel(`${selectedCalendarAbsence.end_date}T12:00:00`)}` : ""}{selectedCalendarAbsence.start_time && selectedCalendarAbsence.end_time ? ` · ${selectedCalendarAbsence.start_time.slice(0, 5)} – ${selectedCalendarAbsence.end_time.slice(0, 5)}` : " · celý deň"}</p>
+          <p><Users size={15} /> {roster.find((member) => member.user_id === selectedCalendarAbsence.user_id)?.full_name || roster.find((member) => member.user_id === selectedCalendarAbsence.user_id)?.email || "Zamestnanec"}</p>
+          {selectedCalendarAbsence.note && <p className="calendar-google-event-description">{selectedCalendarAbsence.note}</p>}
+          <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarAbsence(null)}>Zavrieť</button></div>
         </section>
       </div>}
       {selectedGoogleCalendarEvent && <div className="modal-backdrop" onMouseDown={(event) => {
