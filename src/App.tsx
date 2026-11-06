@@ -41,7 +41,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyJoinRequest, CompanyPlan, CompanySearchResult, Customer, CustomerStatus, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus } from "./lib/types";
+import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyJoinRequest, CompanyPlan, CompanySearchResult, Customer, CustomerStatus, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderPhoto, WorkOrderStatus, WorkOrderType } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
 import { PrivacyPolicy } from "./PrivacyPolicy";
 import { GOOGLE_SHEETS_APPS_SCRIPT } from "./lib/googleSheetsAppsScript";
@@ -251,6 +251,13 @@ function workOrderStatusName(status: WorkOrderStatus) {
           : "Pridelené";
 }
 
+const WORK_ORDER_TYPE_LABELS: Record<WorkOrderType, string> = {
+  MEASUREMENT: "Zameranie",
+  INSTALLATION: "Montáž",
+  REPAIR: "Oprava",
+  OTHER: "Iné",
+};
+
 function customerStatusName(status: CustomerStatus) {
   return status === "APPROVED" ? "Schválená" : status === "REJECTED" ? "Zamietnutá" : "Bez odpovede";
 }
@@ -386,6 +393,7 @@ export function App() {
   const [customerOwnerId, setCustomerOwnerId] = useState("ALL");
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
+  const [showCustomerSheetsModal, setShowCustomerSheetsModal] = useState(false);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<string | null>(null);
   const [workOrderTab, setWorkOrderTab] = useState("SENT");
@@ -1869,10 +1877,11 @@ export function App() {
     setError("");
     setNotice("");
     try {
-      const { error: createError } = await client.rpc("create_work_order_with_details", {
+      const { error: createError } = await client.rpc("create_work_order_with_type", {
         p_company_id: activeCompanyId,
         p_assignee_ids: assigneeIds,
         p_title: String(form.get("title") ?? ""),
+        p_work_type: String(form.get("work_type") ?? "INSTALLATION"),
         p_address: String(form.get("address") ?? ""),
         p_due_date: String(form.get("due_date") ?? ""),
         p_description: String(form.get("description") ?? ""),
@@ -3786,6 +3795,7 @@ export function App() {
         <header className="dashboard-title-row">
           <div><span className="eyebrow">OBCHODNÁ EVIDENCIA</span><h1>Zákazníci</h1><p>Každý obchodník spravuje svoju databázu zákazníkov.</p></div>
           <div className="customer-export-actions">
+            {activeMembership?.is_salesperson && <button className="button button-outline button-small" onClick={() => setShowCustomerSheetsModal(true)}><FileSpreadsheet size={14} /> Google Tabuľky</button>}
             <button className="button button-primary button-small" onClick={() => { setEditingCustomer(null); setError(""); setNotice(""); setShowCustomerForm(true); }}><Plus size={14} /> Nový zákazník</button>
             <button className="button button-outline button-small" onClick={downloadCustomersCsv}><Download size={14} /> Excel (CSV)</button>
             <button className="button button-outline button-small" onClick={printCustomers}><Printer size={14} /> Exportovať PDF</button>
@@ -3795,9 +3805,12 @@ export function App() {
           <label className="field customer-search"><span>Vyhľadávanie</span><span className="search-input"><Search size={16} /><input type="search" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Meno, lokalita, produkt alebo kontakt" /></span></label>
           {isCompanyOwner && <label className="field"><span>Obchodník</span><select value={customerOwnerId} onChange={(event) => setCustomerOwnerId(event.target.value)}><option value="ALL">Všetci obchodníci</option>{salespeople.map((member) => <option key={member.user_id} value={member.user_id}>{member.full_name || member.email}</option>)}</select></label>}
         </section>
-        {activeMembership?.is_salesperson && <section className="panel customer-sheets-panel">
+        {activeMembership?.is_salesperson && showCustomerSheetsModal && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !googleSheetsBusy) setShowCustomerSheetsModal(false);
+        }}>
+        <section className="panel customer-sheets-panel customer-sheets-modal" role="dialog" aria-modal="true" aria-labelledby="customer-sheets-title">
           <div className="customer-sheets-heading">
-            <div><span className="eyebrow">GOOGLE TABUĽKY</span><h2><FileSpreadsheet size={18} /> Synchronizácia zákazníkov</h2>
+            <div><span className="eyebrow">GOOGLE TABUĽKY</span><h2 id="customer-sheets-title"><FileSpreadsheet size={18} /> Synchronizácia zákazníkov</h2>
               <p>{googleSheetsConnection?.connected
                 ? `Tabuľka je prepojená${googleSheetsConnection.lastSyncAt ? ` · naposledy synchronizovaná ${new Intl.DateTimeFormat("sk-SK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(googleSheetsConnection.lastSyncAt))}` : ""}. Noví zákazníci a vymazania z Workeny sa synchronizujú automaticky; úpravy a zmeny v tabuľke synchronizujte ručne.`
                 : "Prepojte svoju tabuľku. Synchronizácia zmien aj vymazaní sa spúšťa ručne."}</p>
@@ -3805,6 +3818,7 @@ export function App() {
             <div className="calendar-google-actions">
               {googleSheetsConnection?.connected && <button className="button button-outline button-small" disabled={googleSheetsBusy} onClick={() => void syncGoogleSheetsCustomers()}><RefreshCw size={13} /> {googleSheetsBusy ? "Synchronizujem…" : "Synchronizovať"}</button>}
               {googleSheetsConnection?.configured && <button className="button button-quiet button-small" disabled={googleSheetsBusy} onClick={() => void disconnectGoogleSheets()}>Odpojiť</button>}
+              <button type="button" className="logout-button" aria-label="Zavrieť nastavenia Google Tabuliek" disabled={googleSheetsBusy} onClick={() => setShowCustomerSheetsModal(false)}><X size={18} /></button>
             </div>
           </div>
           {googleSheetsError && <p className="form-error" role="alert">{googleSheetsError}</p>}
@@ -3836,7 +3850,8 @@ export function App() {
               </form>
             </div>
           </details>
-        </section>}
+        </section>
+        </div>}
         {notice && <p className="invite-success" role="status">{notice}</p>}
         {showCustomerForm && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !busy) {
@@ -4071,11 +4086,12 @@ export function App() {
       title={`${item.member?.full_name || item.member?.email || "Zamestnanec"} · ${item.order.title} · ${workOrderStatusName(item.order.status)}`}
       onClick={() => setSelectedCalendarOrder(item.order)}
     >{calendarDisplayMode === "DETAIL" ? <>
-      <span className="calendar-order-heading"><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-install"}`} />{calendarOrderTime(item.order)}</span>
+      <span className="calendar-order-heading"><i className={`calendar-order-kind calendar-order-kind-${item.order.work_type.toLowerCase()}`} />{calendarOrderTime(item.order)}</span>
       <strong className="calendar-order-title">{item.order.title}</strong>
+      <span className="calendar-order-type">{WORK_ORDER_TYPE_LABELS[item.order.work_type]}</span>
       <span className="calendar-order-location"><MapPin size={11} /> {item.order.address}</span>
       {renderCalendarAssignees(item.order)}
-    </> : <><i className={`calendar-order-kind ${item.order.status === "MEASURED" ? "calendar-order-kind-measure" : "calendar-order-kind-install"}`} />{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</>}</button> : item.kind === "google" ? <button
+    </> : <><i className={`calendar-order-kind calendar-order-kind-${item.order.work_type.toLowerCase()}`} />{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</>}</button> : item.kind === "google" ? <button
       className={`calendar-google-event ${calendarDisplayMode === "DETAIL" ? "calendar-google-event-detail" : ""}`}
       key={`google-${day}-${item.event.id}`}
       title={`${googleCalendarEventTime(item.event)} · ${item.event.summary || "Udalosť Google Kalendára"}`}
@@ -4113,6 +4129,7 @@ export function App() {
             : <form className="form-stack work-order-form" onSubmit={(event) => void createWorkOrder(event)}>
               <div className="form-grid">
                 <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Elektroinštalácia rodinného domu" required /></label>
+                <label className="field"><span>Typ zákazky</span><select name="work_type" defaultValue="INSTALLATION"><option value="MEASUREMENT">Zameranie</option><option value="INSTALLATION">Montáž</option><option value="REPAIR">Oprava</option><option value="OTHER">Iné</option></select></label>
                 {isManager && <div className="field">
                   <span>Priradiť zamestnancom</span>
                   <div className="assignee-picker">
@@ -4197,8 +4214,10 @@ export function App() {
             <span className="calendar-legend-item"><i className="calendar-absence-swatch" />Schválená neprítomnosť</span>
           </div>}
           <div className="calendar-legend" aria-label="Legenda typov zákaziek">
-            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-measure" />Meranie</span>
-            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-install" />Montáž</span>
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-measurement" />Zameranie</span>
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-installation" />Montáž</span>
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-repair" />Oprava</span>
+            <span className="calendar-legend-item"><i className="calendar-order-kind calendar-order-kind-other" />Iné</span>
           </div>
           <div className={`work-order-calendar ${calendarExpanded ? "work-order-calendar-expanded" : ""} ${calendarDisplayMode === "DETAIL" ? "calendar-detail-mode" : ""}`} role="grid" aria-label="Kalendár zákaziek">
             {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((weekday) => <div className="calendar-weekday" role="columnheader" key={weekday}>{weekday}</div>)}
@@ -4217,13 +4236,14 @@ export function App() {
                   <span>{new Intl.DateTimeFormat("sk-SK", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${day}T12:00:00`))}</span>
                 </header>
                 <div className="calendar-agenda-items">{items.map((item) => item.kind === "order" ? <button
-                  className={`calendar-agenda-item calendar-agenda-order ${item.order.status === "MEASURED" ? "calendar-agenda-measure" : "calendar-agenda-install"}`}
+                  className={`calendar-agenda-item calendar-agenda-order calendar-agenda-${item.order.work_type.toLowerCase()}`}
                   style={getCalendarEmployeeColor(item.userId)}
                   key={`agenda-order-${item.order.id}-${item.userId}`}
                   onClick={() => setSelectedCalendarOrder(item.order)}
                 >
                   <strong>{calendarOrderTime(item.order)}</strong>
                   <span>{item.order.title}</span>
+                  {calendarDisplayMode === "DETAIL" && <small>{WORK_ORDER_TYPE_LABELS[item.order.work_type]}</small>}
                   {calendarDisplayMode === "DETAIL" && <small className="calendar-agenda-location"><MapPin size={12} /> {item.order.address}</small>}
                   {calendarDisplayMode === "DETAIL" ? <small>{calendarAssignees(item.order).map((member) => member.full_name || member.email).join(", ") || "Bez priradeného zamestnanca"}</small>
                     : isCompanyOwner && <small>{item.member?.full_name || item.member?.email || "Zamestnanec"}</small>}
@@ -4287,6 +4307,7 @@ export function App() {
                 <div className="work-order-heading">
                   <div><span className="eyebrow">ZÁKAZKA</span><h2>{workOrder.title}</h2></div>
                   <span className={`status-pill work-order-status work-order-${workOrder.status.toLowerCase()}`}>{workOrderStatusName(workOrder.status)}</span>
+                  <span className={`work-order-type-pill work-order-type-${workOrder.work_type.toLowerCase()}`}>{WORK_ORDER_TYPE_LABELS[workOrder.work_type]}</span>
                 </div>
                 <div className="work-order-summary">
                   <span className={overdue ? "work-order-overdue" : ""}><CalendarDays size={14} />{dateLabel(`${workOrder.due_date}T12:00:00`)}{workOrder.starts_at ? ` · ${workOrder.starts_at.slice(0, 5)}` : workOrder.time_to_arrange ? " · dohodnúť čas" : ""}</span>
@@ -4312,6 +4333,7 @@ export function App() {
                 </div>}
                 {isExpanded && <>
                 <div className="work-order-meta">
+                  <span><ClipboardList size={14} />Typ zákazky: {WORK_ORDER_TYPE_LABELS[workOrder.work_type]}</span>
                   <span><MapPin size={14} />{workOrder.address}</span>
                   <span className={overdue ? "work-order-overdue" : ""}><Clock3 size={14} />Termín: {dateLabel(`${workOrder.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
                   {workOrder.time_to_arrange

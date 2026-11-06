@@ -378,14 +378,17 @@ button:disabled { opacity: .65; cursor: wait; }
 .calendar-order-detail { align-content: start; }
 .calendar-order-heading { display: flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; line-height: 1.3; }
 .calendar-order-title { font-size: 10px; line-height: 1.3; overflow-wrap: anywhere; }
+.calendar-order-type { color: #536453; font-size: 8px; font-weight: 700; }
 .calendar-order-location { display: flex; align-items: flex-start; gap: 3px; font-size: 8px; line-height: 1.3; overflow-wrap: anywhere; }
 .calendar-order-location svg { flex: 0 0 auto; margin-top: 1px; }
 .calendar-assignees { display: flex; align-items: center; gap: 2px; padding-top: 1px; }
 .calendar-assignee-avatar, .calendar-assignee-more { display: inline-grid; width: 18px; height: 18px; place-items: center; border: 1px solid #ffffffb8; border-radius: 50%; color: #344536; background: #ffffffbd; font-size: 7px; font-weight: 750; }
 .calendar-assignee-more { width: auto; min-width: 18px; padding: 0 4px; border-radius: 9px; }
 .calendar-order-kind { display: inline-block; width: 9px; height: 9px; flex: 0 0 9px; border-radius: 3px; }
-.calendar-order-kind-measure { background: #e58d32; }
-.calendar-order-kind-install { background: #8762c5; }
+.calendar-order-kind-measurement { background: #e58d32; }
+.calendar-order-kind-installation { background: #8762c5; }
+.calendar-order-kind-repair { background: #ca6156; }
+.calendar-order-kind-other { background: #5c89a7; }
 .calendar-absence { display: block; overflow: hidden; width: 100%; padding: 4px 5px; border-radius: 5px; font-size: 9px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .calendar-absence-detail { align-content: start; width: 100%; padding: 5px; border-radius: 5px; font-size: 9px; line-height: 1.35; text-align: left; cursor: pointer; }
 .calendar-absence strong { margin-right: 3px; }
@@ -428,6 +431,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .modal-heading h2 { margin: 4px 0 0; font: 700 20px var(--serif); }
 .customer-toolbar { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(200px, 320px); align-items: end; gap: 12px; padding: 15px; }
 .customer-sheets-panel { display: grid; gap: 12px; margin-bottom: 14px; padding: 15px; }
+.customer-sheets-modal { width: min(760px, 100%); max-height: min(90vh, 900px); overflow-y: auto; margin: 0; box-shadow: 0 20px 70px #15251c40; }
 .customer-sheets-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .customer-sheets-heading > div:first-child { display: grid; gap: 5px; }
 .customer-sheets-heading h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: #3e4d3f; font: 700 16px var(--serif); }
@@ -476,6 +480,11 @@ button:disabled { opacity: .65; cursor: wait; }
 .work-order-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .work-order-heading h2 { margin: 4px 0 0; font: 700 17px/1.35 var(--serif); }
 .work-order-status { flex: 0 0 auto; padding: 5px 9px; }
+.work-order-type-pill { flex: 0 0 auto; padding: 5px 9px; border-radius: 999px; font-size: 9px; font-weight: 700; }
+.work-order-type-measurement { color: #88500f; background: #fff0dc; }
+.work-order-type-installation { color: #5d478a; background: #f0eafa; }
+.work-order-type-repair { color: #944941; background: #fae9e7; }
+.work-order-type-other { color: #426982; background: #e9f2f7; }
 .work-order-assigned { color: #6d7281; background: #f0f1f5; }
 .work-order-in_progress { color: #947344; background: #fbf3e2; }
 .work-order-measured { color: #5263a0; background: #eef0fb; }
@@ -698,8 +707,10 @@ button:disabled { opacity: .65; cursor: wait; }
   .calendar-agenda-google > strong { color: #4d5ba1; }
   .calendar-agenda-absence { border-left-color: #bd7a32 !important; background: #fffaf0; }
   .calendar-agenda-absence > strong { color: #8d5b22; }
-  .calendar-agenda-measure { border-left-color: #e58d32 !important; }
-  .calendar-agenda-install { border-left-color: #8762c5 !important; }
+  .calendar-agenda-measurement { border-left-color: #e58d32 !important; }
+  .calendar-agenda-installation { border-left-color: #8762c5 !important; }
+  .calendar-agenda-repair { border-left-color: #ca6156 !important; }
+  .calendar-agenda-other { border-left-color: #5c89a7 !important; }
   .calendar-agenda-empty { margin: 0; padding: 18px 14px; border: 1px dashed #dfe6dc; border-radius: 10px; color: #748073; background: #fafcf9; font-size: 12px; line-height: 1.5; text-align: center; }
   .landing-nav { height: 72px; }
   .landing-nav-links { gap: 9px; font-size: 9px; }

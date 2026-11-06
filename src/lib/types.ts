@@ -102,6 +102,7 @@ export type AttendanceBreak = {
 };
 
 export type WorkOrderStatus = "ASSIGNED" | "IN_PROGRESS" | "MEASURED" | "WORKING" | "DONE";
+export type WorkOrderType = "MEASUREMENT" | "INSTALLATION" | "REPAIR" | "OTHER";
 
 export type WorkOrder = {
   id: string;
@@ -109,6 +110,7 @@ export type WorkOrder = {
   assignee_id: string;
   created_by: string | null;
   title: string;
+  work_type: WorkOrderType;
   address: string;
   contact_phone: string | null;
   due_date: string;
