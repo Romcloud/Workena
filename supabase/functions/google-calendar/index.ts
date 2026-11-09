@@ -19,6 +19,7 @@ type Connection = {
 type WorkOrderRow = {
   id: string;
   company_id: string;
+  assignee_id: string;
   title: string;
   address: string;
   due_date: string;
@@ -285,7 +286,7 @@ async function syncCompanyCalendar(
 ) {
   const { data: activeMember, error: memberError } = await adminClient
     .from("memberships")
-    .select("user_id, role")
+    .select("user_id")
     .eq("company_id", originalConnection.company_id)
     .eq("user_id", originalConnection.user_id)
     .eq("active", true)
@@ -310,7 +311,7 @@ async function syncCompanyCalendar(
   if (!lock) return { connected: true, skipped: true };
 
   try {
-    return await syncCompanyCalendarLocked(adminClient, originalConnection, activeMember.role);
+    return await syncCompanyCalendarLocked(adminClient, originalConnection);
   } finally {
     const { error: unlockError } = await adminClient
       .from("google_calendar_connections")
@@ -325,7 +326,6 @@ async function syncCompanyCalendar(
 async function syncCompanyCalendarLocked(
   adminClient: ReturnType<typeof createClient>,
   originalConnection: Connection,
-  memberRole: string,
 ) {
   let connection = originalConnection;
   if (new Date(connection.access_token_expires_at).getTime() < Date.now() + 120_000) {
@@ -334,22 +334,26 @@ async function syncCompanyCalendarLocked(
 
   const { data: orderRows, error: ordersError } = await adminClient
     .from("work_orders")
-    .select("id, company_id, title, address, due_date, description, status, contact_phone, starts_at, ends_at, time_to_arrange, updated_at")
+    .select("id, company_id, assignee_id, title, address, due_date, description, status, contact_phone, starts_at, ends_at, time_to_arrange, updated_at")
     .eq("company_id", connection.company_id);
   if (ordersError) throw ordersError;
   let visibleOrderRows = orderRows ?? [];
-  if (memberRole !== "OWNER") {
-    const { data: assignmentRows, error: assignmentsError } = await adminClient
-      .from("work_order_assignees")
-      .select("work_order_id")
-      .eq("company_id", connection.company_id)
-      .eq("user_id", connection.user_id)
-      .is("declined_at", null)
-      .is("reassigned_at", null);
-    if (assignmentsError) throw assignmentsError;
-    const assignedOrderIds = new Set((assignmentRows ?? []).map((assignment) => assignment.work_order_id));
-    visibleOrderRows = visibleOrderRows.filter((order) => assignedOrderIds.has(order.id));
+  const { data: assignmentRows, error: assignmentsError } = await adminClient
+    .from("work_order_assignees")
+    .select("work_order_id, user_id, declined_at, reassigned_at")
+    .eq("company_id", connection.company_id);
+  if (assignmentsError) throw assignmentsError;
+  const allAssignments = assignmentRows ?? [];
+  const assignedOrderIds = new Set(allAssignments
+    .filter((assignment) => assignment.user_id === connection.user_id && !assignment.declined_at && !assignment.reassigned_at)
+    .map((assignment) => assignment.work_order_id));
+  const ordersWithAssignments = new Set(allAssignments.map((assignment) => assignment.work_order_id));
+  for (const order of orderRows ?? []) {
+    if (!ordersWithAssignments.has(order.id) && order.assignee_id === connection.user_id) {
+      assignedOrderIds.add(order.id);
+    }
   }
+  visibleOrderRows = visibleOrderRows.filter((order) => assignedOrderIds.has(order.id));
   const orders = visibleOrderRows as WorkOrderRow[];
   const ordersById = new Map(orders.map((order) => [order.id, order]));
 
@@ -362,6 +366,28 @@ async function syncCompanyCalendarLocked(
   const mappings = (mappingRows ?? []) as EventMapping[];
   const mappingByEvent = new Map(mappings.map((mapping) => [mapping.google_event_id, mapping]));
   const mappingByOrder = new Map(mappings.map((mapping) => [mapping.work_order_id, mapping]));
+  for (const mapping of mappings) {
+    if (ordersById.has(mapping.work_order_id)) continue;
+    try {
+      await googleRequest<null>(
+        connection.access_token,
+        `/calendars/primary/events/${encodeURIComponent(mapping.google_event_id)}`,
+        "DELETE",
+      );
+    } catch (reason) {
+      if (!errorMessage(reason).includes("Google Kalendár: 404")) throw reason;
+    }
+    const { error: deleteMappingError } = await adminClient
+      .from("google_work_order_events")
+      .delete()
+      .eq("work_order_id", mapping.work_order_id)
+      .eq("company_id", connection.company_id)
+      .eq("user_id", connection.user_id);
+    if (deleteMappingError) throw deleteMappingError;
+    mappingByEvent.delete(mapping.google_event_id);
+    mappingByOrder.delete(mapping.work_order_id);
+    removed++;
+  }
   const { events, syncToken } = await listGoogleChanges(connection.access_token, connection.sync_token);
   const timeZone = Deno.env.get("WORKENA_TIMEZONE") ?? "Europe/Bratislava";
   let pulled = 0;

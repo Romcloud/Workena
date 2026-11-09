@@ -110,6 +110,8 @@ export type WorkOrder = {
   assignee_id: string;
   created_by: string | null;
   title: string;
+  customer_id?: string | null;
+  customer_name?: string | null;
   work_type: WorkOrderType;
   address: string;
   contact_phone: string | null;

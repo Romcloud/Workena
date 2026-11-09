@@ -1889,6 +1889,7 @@ export function App() {
         p_starts_at: startsAt || null,
         p_ends_at: endsAt || null,
         p_time_to_arrange: timeToArrange,
+        p_customer_id: String(form.get("customer_id") ?? "") || null,
       });
       if (createError) {
         setError(createError.message);
@@ -4089,6 +4090,7 @@ export function App() {
       <span className="calendar-order-heading"><i className={`calendar-order-kind calendar-order-kind-${item.order.work_type.toLowerCase()}`} />{calendarOrderTime(item.order)}</span>
       <strong className="calendar-order-title">{item.order.title}</strong>
       <span className="calendar-order-type">{WORK_ORDER_TYPE_LABELS[item.order.work_type]}</span>
+      {item.order.customer_name && <span className="calendar-order-location"><Users size={11} /> Zákazník: {item.order.customer_name}</span>}
       <span className="calendar-order-location"><MapPin size={11} /> {item.order.address}</span>
       {renderCalendarAssignees(item.order)}
     </> : <><i className={`calendar-order-kind calendar-order-kind-${item.order.work_type.toLowerCase()}`} />{item.order.time_to_arrange ? "Dohodnúť čas · " : item.order.starts_at ? `${item.order.starts_at.slice(0, 5)} · ` : "Bez času · "}{isCompanyOwner ? `${item.member?.full_name || item.member?.email || "Zamestnanec"} · ` : ""}{item.order.title}</>}</button> : item.kind === "google" ? <button
@@ -4130,6 +4132,7 @@ export function App() {
               <div className="form-grid">
                 <label className="field"><span>Názov zákazky</span><input name="title" minLength={2} maxLength={140} placeholder="napr. Elektroinštalácia rodinného domu" required /></label>
                 <label className="field"><span>Typ zákazky</span><select name="work_type" defaultValue="INSTALLATION"><option value="MEASUREMENT">Zameranie</option><option value="INSTALLATION">Montáž</option><option value="REPAIR">Oprava</option><option value="OTHER">Iné</option></select></label>
+                {canAccessCustomers && <label className="field"><span>Zákazník <small>voliteľné</small></span><select name="customer_id" defaultValue=""><option value="">Bez zákazníka</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.full_name}</option>)}</select></label>}
                 {isManager && <div className="field">
                   <span>Priradiť zamestnancom</span>
                   <div className="assignee-picker">
@@ -4244,6 +4247,7 @@ export function App() {
                   <strong>{calendarOrderTime(item.order)}</strong>
                   <span>{item.order.title}</span>
                   {calendarDisplayMode === "DETAIL" && <small>{WORK_ORDER_TYPE_LABELS[item.order.work_type]}</small>}
+                  {calendarDisplayMode === "DETAIL" && item.order.customer_name && <small>Zákazník: {item.order.customer_name}</small>}
                   {calendarDisplayMode === "DETAIL" && <small className="calendar-agenda-location"><MapPin size={12} /> {item.order.address}</small>}
                   {calendarDisplayMode === "DETAIL" ? <small>{calendarAssignees(item.order).map((member) => member.full_name || member.email).join(", ") || "Bez priradeného zamestnanca"}</small>
                     : isCompanyOwner && <small>{item.member?.full_name || item.member?.email || "Zamestnanec"}</small>}
@@ -4334,6 +4338,7 @@ export function App() {
                 {isExpanded && <>
                 <div className="work-order-meta">
                   <span><ClipboardList size={14} />Typ zákazky: {WORK_ORDER_TYPE_LABELS[workOrder.work_type]}</span>
+                  {workOrder.customer_name && <span><Users size={14} />Zákazník: {workOrder.customer_name}</span>}
                   <span><MapPin size={14} />{workOrder.address}</span>
                   <span className={overdue ? "work-order-overdue" : ""}><Clock3 size={14} />Termín: {dateLabel(`${workOrder.due_date}T12:00:00`)}{overdue ? " · po termíne" : ""}</span>
                   {workOrder.time_to_arrange
