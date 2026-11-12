@@ -33,8 +33,8 @@ const WORKENA_HEADER_ALIASES = {
   location: ["Lokalita", "Miesto", "Location"],
   lead_source: ["Zdroj dopytu", "Odkiaľ prišiel dopyt", "Odkiaľ prišiel dopyt?"],
   product: ["Produkt", "Produkty"],
-  quote_sent_date: ["CP poslaná dňa", "Ponuka poslaná dňa", "Quote sent date"],
-  contact_details: ["Kontaktné údaje", "Kontakt", "Contact details"],
+  quote_sent_date: ["CP poslaná dňa", "Dátum CP", "Ponuka poslaná dňa", "Quote sent date"],
+  contact_details: ["Kontaktné údaje", "Kontakty", "Kontakt", "Contact details"],
   estimated_price: ["Približná cena", "Cca bez DPH", "Cena bez DPH", "Estimated price"],
   status: ["Stav", "Status"],
   approved: ["Schválená", "Schvalena"],
@@ -71,10 +71,10 @@ function headerMap(headers) {
 function hasCustomerHeaders(headers) {
   const normalized = new Set(headers.map(normalizedHeader));
   const contains = (field) => WORKENA_HEADER_ALIASES[field].some((alias) => normalized.has(normalizedHeader(alias)));
-  const required = ["customer_date", "full_name", "location", "lead_source", "product", "quote_sent_date", "contact_details", "estimated_price"];
-  return required.every(contains) && (
-    contains("status") || (contains("approved") && contains("rejected") && contains("no_response"))
-  );
+  return contains("full_name") && [
+    "customer_date", "location", "lead_source", "product", "quote_sent_date",
+    "contact_details", "estimated_price", "status", "approved", "rejected", "no_response",
+  ].some(contains);
 }
 
 function hasCustomerRows(sheet) {
@@ -133,6 +133,29 @@ function setupWorkena() {
     sheet.getRange(1, 1, 1, WORKENA_HEADERS.length).setValues([WORKENA_HEADERS]);
   }
   let currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const hasHeader = (field) => WORKENA_HEADER_ALIASES[field].some((alias) =>
+    currentHeaders.some((header) => normalizedHeader(header) === normalizedHeader(alias))
+  );
+  [
+    ["customer_date", "Dátum"],
+    ["full_name", "Meno"],
+    ["location", "Lokalita"],
+    ["lead_source", "Zdroj dopytu"],
+    ["product", "Produkt"],
+    ["quote_sent_date", "CP poslaná dňa"],
+    ["contact_details", "Kontaktné údaje"],
+    ["estimated_price", "Približná cena"],
+  ].forEach(([field, header]) => {
+    if (!hasHeader(field)) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      currentHeaders.push(header);
+    }
+  });
+  if (!hasHeader("status") && !(hasHeader("approved") && hasHeader("rejected") && hasHeader("no_response"))) {
+    const header = "Stav";
+    sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+    currentHeaders.push(header);
+  }
   if (currentHeaders.findIndex((header) => normalizedHeader(header) === normalizedHeader("_workena_id")) < 0) {
     currentHeaders.push("_workena_id");
     sheet.getRange(1, currentHeaders.length).setValue("_workena_id");
@@ -216,12 +239,17 @@ function comparableDate(value, timeZone) {
   const raw = String(value ?? "").trim();
   const isoDate = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
   if (isoDate) return isoDate[1];
-  const skDate = /^(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})$/.exec(raw);
-  if (skDate) return skDate[3] + "-" + skDate[2].padStart(2, "0") + "-" + skDate[1].padStart(2, "0");
+  const yearFirst = /^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/.exec(raw);
+  if (yearFirst) return yearFirst[1] + "-" + yearFirst[2].padStart(2, "0") + "-" + yearFirst[3].padStart(2, "0");
   const monthYear = /^(\d{1,2})\/(\d{2}|\d{4})$/.exec(raw);
   if (monthYear) {
     const year = monthYear[2].length === 2 ? "20" + monthYear[2] : monthYear[2];
     return year + "-" + monthYear[1].padStart(2, "0") + "-01";
+  }
+  const dayMonthYear = /^(\d{1,2})[./-]\s*(\d{1,2})[./-]\s*(\d{2}|\d{4})$/.exec(raw);
+  if (dayMonthYear) {
+    const year = dayMonthYear[3].length === 2 ? "20" + dayMonthYear[3] : dayMonthYear[3];
+    return year + "-" + dayMonthYear[2].padStart(2, "0") + "-" + dayMonthYear[1].padStart(2, "0");
   }
   return raw.slice(0, 10);
 }

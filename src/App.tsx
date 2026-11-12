@@ -396,6 +396,7 @@ export function App() {
   const [showCustomerSheetsModal, setShowCustomerSheetsModal] = useState(false);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<string | null>(null);
+  const [workOrderPopupId, setWorkOrderPopupId] = useState<string | null>(null);
   const [workOrderTab, setWorkOrderTab] = useState("SENT");
   const [workOrderSort, setWorkOrderSort] = useState<"DUE" | "ASSIGNED">("DUE");
   const [workOrderDateFilter, setWorkOrderDateFilter] = useState("");
@@ -1528,12 +1529,24 @@ export function App() {
     let entryId = editingEntry?.id ?? "";
     let saveError: string | null = null;
     if (editingEntry) {
-      const { error: updateError } = await client
-        .from("work_entries")
-        .update(values)
-        .eq("id", editingEntry.id)
-        .eq("company_id", activeCompanyId);
-      if (updateError) saveError = updateError.message;
+      if (editingEntry.status === "APPROVED" && editingEntry.user_id === session.user.id) {
+        const { error: updateError } = await client.rpc("update_approved_own_work_entry", {
+          p_entry_id: editingEntry.id,
+          p_worked_at: values.worked_at,
+          p_hours: values.hours,
+          p_work_type: values.work_type,
+          p_workplace: values.workplace,
+          p_note: values.note,
+        });
+        if (updateError) saveError = updateError.message;
+      } else {
+        const { error: updateError } = await client
+          .from("work_entries")
+          .update(values)
+          .eq("id", editingEntry.id)
+          .eq("company_id", activeCompanyId);
+        if (updateError) saveError = updateError.message;
+      }
     } else {
       const { data, error: insertError } = await client
         .from("work_entries")
@@ -1562,7 +1575,9 @@ export function App() {
       if (photosError) {
         setError(`Záznam bol uložený, no fotografie sa nepodarilo úplne pridať: ${photosError}`);
       } else {
-        setNotice(editingEntry ? "Záznam bol upravený a dochádzka zosynchronizovaná." : "Záznam bol uložený a dochádzka zosynchronizovaná.");
+        setNotice(editingEntry?.status === "APPROVED" && editingEntry.user_id === session.user.id
+          ? "Záznam bol upravený a odoslaný na opätovné schválenie."
+          : editingEntry ? "Záznam bol upravený a dochádzka zosynchronizovaná." : "Záznam bol uložený a dochádzka zosynchronizovaná.");
       }
     }
     setBusy(false);
@@ -2632,6 +2647,23 @@ export function App() {
     }
   };
 
+  const startEditingAttendanceShift = (shift: AttendanceShift) => {
+    setEditingAttendanceShift({
+      id: shift.id,
+      startedAt: dateTimeLocal(shift.started_at),
+      endedAt: shift.ended_at ? dateTimeLocal(shift.ended_at) : "",
+    });
+    setError("");
+  };
+
+  const renderAttendanceShiftEditor = (shift: AttendanceShift) => editingAttendanceShift?.id === shift.id && (
+    <div className="attendance-edit-form">
+      <label className="field"><span>Začiatok</span><input type="datetime-local" value={editingAttendanceShift.startedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, startedAt: event.target.value })} required /></label>
+      <label className="field"><span>Koniec <small>prázdne = zmena stále prebieha</small></span><input type="datetime-local" value={editingAttendanceShift.endedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, endedAt: event.target.value })} /></label>
+      <div className="form-actions"><button type="button" className="button button-quiet button-small" onClick={() => setEditingAttendanceShift(null)}>Zrušiť</button><button type="button" className="button button-primary button-small" disabled={busy} onClick={() => void saveAttendanceShift(shift)}>{busy ? "Ukladám…" : "Uložiť zmenu"}</button></div>
+    </div>
+  );
+
   const deleteAttendanceShift = async (shiftId: string) => {
     if (!client || !window.confirm("Naozaj chcete vymazať tento dochádzkový záznam?")) return;
     setBusy(true);
@@ -3615,14 +3647,18 @@ export function App() {
         </div>
         {!activeShift
           ? <button className="button button-primary" disabled={busy} onClick={() => void attendanceAction("start_attendance")}><Play size={16} /> Začať zmenu</button>
-          : activeBreak
-            ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
-            : <div className="attendance-clock-actions">
-              <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
-              <button className="button button-danger" disabled={busy} onClick={requestEndAttendance}><Square size={15} /> Ukončiť zmenu</button>
-            </div>}
+          : <div className="attendance-clock-actions">
+            {activeBreak
+              ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
+              : <>
+                <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
+                <button className="button button-danger" disabled={busy} onClick={requestEndAttendance}><Square size={15} /> Ukončiť zmenu</button>
+              </>}
+            <button type="button" className="button button-outline" onClick={() => startEditingAttendanceShift(activeShift)}><Pencil size={14} /> Opraviť čas zmeny</button>
+          </div>}
+        {activeShift && renderAttendanceShiftEditor(activeShift)}
       </section>}
-      {isEmployeeUser && <p className="attendance-schedule-note">Prihlásenie zamestnanca zmenu automaticky spustí alebo obnoví. Odhlásenie ani zatvorenie aplikácie časovač nezastaví; na zastavenie použite tlačidlo „Ukončiť zmenu“.</p>}
+      {isEmployeeUser && <p className="attendance-schedule-note">Prihlásenie zamestnanca zmenu automaticky spustí alebo obnoví. Odhlásenie ani zatvorenie aplikácie časovač nezastaví. Ak ste sa zabudli odhlásiť, cez „Opraviť čas zmeny“ nastavte správny čas ukončenia.</p>}
       {notice && <p className="invite-success" role="status">{notice}</p>}
       {error && !showAbsenceForm && <p className="form-error" role="alert">{error}</p>}
       <section className="records-section attendance-history">
@@ -3666,7 +3702,8 @@ export function App() {
                     const shiftBreaks = attendanceBreaks.filter((pause) => pause.shift_id === shift.id);
                     const runningBreak = shiftBreaks.find((pause) => pause.ended_at === null);
                     const sourceEntry = shift.source_work_entry_id ? entries.find((entry) => entry.id === shift.source_work_entry_id) : undefined;
-                    const canEditSourceEntry = !!sourceEntry && (canManageAttendance || (sourceEntry.user_id === session?.user.id && sourceEntry.status !== "APPROVED"));
+                    const canEditSourceEntry = !!sourceEntry && (canManageAttendance || sourceEntry.user_id === session?.user.id);
+                    const canDeleteSourceEntry = !!sourceEntry && (canManageAttendance || (sourceEntry.user_id === session?.user.id && sourceEntry.status === "PENDING"));
                     return <section className="employee-day attendance-day" key={shift.id}>
                       <div className="employee-day-heading">
                         <strong>{dateLabel(shift.started_at)}</strong>
@@ -3678,16 +3715,9 @@ export function App() {
                           ? <span className="status-pill status-approved">Zo záznamu práce</span>
                           : !shift.ended_at && <span className="status-pill status-pending">{runningBreak ? "Prestávka" : "Prebieha"}</span>}
                         {shift.note && <small className="attendance-shift-note">{shift.note}</small>}
-                        {!shift.source_work_entry_id && (canManageAttendance || shift.user_id === session?.user.id) && <button
+                        {!shift.source_work_entry_id && (canManageAttendance || shift.user_id === session?.user.id) && shift.id !== activeShift?.id && <button
                           className="button button-outline button-small"
-                          onClick={() => {
-                            setEditingAttendanceShift({
-                              id: shift.id,
-                              startedAt: dateTimeLocal(shift.started_at),
-                              endedAt: shift.ended_at ? dateTimeLocal(shift.ended_at) : "",
-                            });
-                            setError("");
-                          }}
+                          onClick={() => startEditingAttendanceShift(shift)}
                         ><Pencil size={13} /> Upraviť</button>}
                         {!shift.source_work_entry_id && (canManageAttendance || shift.user_id === session?.user.id) && <button
                           className="button button-outline button-small"
@@ -3698,17 +3728,13 @@ export function App() {
                           className="button button-outline button-small"
                           onClick={() => { setEditingEntry(sourceEntry ?? null); setPendingPhotos([]); setShowEntryForm(true); setError(""); }}
                         ><Pencil size={13} /> Upraviť</button>}
-                        {canEditSourceEntry && <button
+                        {canDeleteSourceEntry && <button
                           className="button button-outline button-small"
                           disabled={busy}
                           onClick={() => sourceEntry && void removeEntry(sourceEntry)}
                         ><Trash2 size={13} /> Vymazať</button>}
                       </div>
-                      {editingAttendanceShift?.id === shift.id && <div className="attendance-edit-form">
-                        <label className="field"><span>Začiatok</span><input type="datetime-local" value={editingAttendanceShift.startedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, startedAt: event.target.value })} required /></label>
-                        <label className="field"><span>Koniec <small>prázdne = zmena stále prebieha</small></span><input type="datetime-local" value={editingAttendanceShift.endedAt} onChange={(event) => setEditingAttendanceShift({ ...editingAttendanceShift, endedAt: event.target.value })} /></label>
-                        <div className="form-actions"><button className="button button-quiet button-small" onClick={() => setEditingAttendanceShift(null)}>Zrušiť</button><button className="button button-primary button-small" disabled={busy} onClick={() => void saveAttendanceShift(shift)}>{busy ? "Ukladám…" : "Uložiť zmenu"}</button></div>
-                      </div>}
+                      {shift.id !== activeShift?.id && renderAttendanceShiftEditor(shift)}
                       {shiftBreaks.map((pause) => <div className="attendance-break-line" key={pause.id}>
                         <Coffee size={13} /><span>Prestávka {timeLabel(pause.started_at)} – {pause.ended_at ? timeLabel(pause.ended_at) : "prebieha"}</span>
                       </div>)}
@@ -3833,8 +3859,8 @@ export function App() {
               <li>Skopírujte <strong>URL webovej aplikácie</strong> (končí na <code>/exec</code>), vložte ju nižšie a kliknite na <strong>Prepojiť tabuľku</strong>. Potom už stačí kliknúť na <strong>Synchronizovať</strong>.</li>
             </ol>
             <p className="muted">Ak ste webovú aplikáciu už nasadili, otvorte <strong>Nasadiť → Spravovať nasadenia → Upraviť</strong> (ceruzka), nastavte prístup na <strong>Všetci (Anyone)</strong>, zvoľte <strong>Nová verzia</strong> a znova kliknite na <strong>Nasadiť</strong>. Bez tohto nastavenia Google vráti chybu 401. Ak možnosť „Všetci (Anyone)“ chýba, musí ju povoliť správca Google Workspace.</p>
-            <p className="muted">Existujúce stĺpce „Dátum“, „Meno“, „Lokalita“, „Odkiaľ prišiel dopyt“, „Produkty“, dátum CP, kontakty, „Cca bez DPH“ a zaškrtávacie polia stavov sa rozpoznajú. Pomocné ID stĺpce pridá skript a skryje ich. „Poznámky“ zostanú v tabuľke zachované, ale nezobrazia sa vo Workene.</p>
-            <p className="muted">Dátum môže byť vo formáte RRRR-MM-DD, D.M.RRRR alebo M/RR (napríklad „5/26“ sa číta ako máj 2026).</p>
+            <p className="muted">Existujúce stĺpce „Dátum“, „Meno“, „Lokalita“, „Odkiaľ prišiel dopyt“, „Produkty“, dátum CP, kontakty, „Cca bez DPH“ a zaškrtávacie polia stavov sa rozpoznajú. Ak niektoré stĺpce chýbajú, skript ich pridá prázdne; ich bunky nemusíte vypĺňať. Pomocné ID stĺpce pridá skript a skryje ich. „Poznámky“ zostanú v tabuľke zachované, ale nezobrazia sa vo Workene.</p>
+            <p className="muted">Formát dátumov nemusíte meniť. Rozpoznávajú sa dátumy Google Tabuliek aj zápisy RRRR-MM-DD, D.M.RRRR, D/M/RRRR a M/RR (napríklad „5/26“ sa číta ako máj 2026).</p>
             <p className="muted">Prázdne bunky sa pri synchronizácii považujú za „bez zmeny“, okrem ceny: prázdna cena alebo hodnota „--“ sa vo Workene uloží ako „bez ceny“. Ak chcete odstrániť zákazníka, vymažte celý riadok v tabuľke.</p>
             <p className="muted">Každý obchodník pripája svoju tabuľku a synchronizujú sa iba jeho zákazníci. Nových zákazníkov a vymazania vo Workene prenášame automaticky; ostatné zmeny synchronizujte tlačidlom. Zákazníka v tabuľke vymažte odstránením celého riadka, nie vymazaním jeho buniek, a potom spustite synchronizáciu. Skryté stĺpce s ID a časom úpravy aj skrytý pomocný hárok ponechajte zachované.</p>
             <div className="customer-sheets-setup">
@@ -4075,9 +4101,16 @@ export function App() {
       : order.starts_at
         ? `${order.starts_at.slice(0, 5)}${order.ends_at ? ` – ${order.ends_at.slice(0, 5)}` : ""}`
         : "Bez času";
-    const calendarDaysWithEvents = calendarCells.flatMap((day) => {
-      if (!day) return [];
-      const items = getCalendarDayItems(day);
+    const mobileAgendaDates = new Set([
+      ...calendarOrders
+        .filter(({ order }) => order.status !== "DONE")
+        .map(({ order }) => order.due_date),
+      ...calendarCells.filter((day): day is string => Boolean(day && day >= today)),
+    ]);
+    const calendarDaysWithEvents = [...mobileAgendaDates].sort().flatMap((day) => {
+      const items = getCalendarDayItems(day).filter((item) =>
+        item.kind === "order" ? item.order.status !== "DONE" : day >= today
+      );
       return items.length ? [{ day, items }] : [];
     });
     const renderCalendarItem = (item: ReturnType<typeof getCalendarDayItems>[number], day: string) => item.kind === "order" ? <button
@@ -4161,14 +4194,14 @@ export function App() {
         </div>}
         <section className="records-section">
           <div className="section-title-row">
-            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky a schválené neprítomnosti v mesiaci.</p></div>
+            <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky a schválené neprítomnosti. V mobile sa zobrazujú nadchádzajúce aj nevybavené zákazky po termíne.</p></div>
             <div className="calendar-heading-actions">
               <div className="calendar-display-toggle" role="group" aria-label="Zobrazenie kalendára">
                 <button type="button" className={`button button-small ${calendarDisplayMode === "COMPACT" ? "button-primary" : "button-outline"}`} aria-pressed={calendarDisplayMode === "COMPACT"} onClick={() => setCalendarDisplayMode("COMPACT")}>Kompaktné</button>
                 <button type="button" className={`button button-small ${calendarDisplayMode === "DETAIL" ? "button-primary" : "button-outline"}`} aria-pressed={calendarDisplayMode === "DETAIL"} onClick={() => setCalendarDisplayMode("DETAIL")}>Detailné</button>
               </div>
-              <button className="button button-outline button-small" onClick={() => setCalendarExpanded((expanded) => !expanded)}>{calendarExpanded ? "Zmenšiť kalendár" : "Roztiahnuť kalendár"}</button>
-              <div className="attendance-month-switch">
+              <button className="button button-outline button-small calendar-expand-toggle" onClick={() => setCalendarExpanded((expanded) => !expanded)}>{calendarExpanded ? "Zmenšiť kalendár" : "Roztiahnuť kalendár"}</button>
+              <div className="attendance-month-switch calendar-month-switch">
               <button className="employee-hours-toggle" aria-label="Predchádzajúci mesiac" onClick={() => {
                 const previous = new Date(`${workOrderMonth}-01T12:00:00`);
                 previous.setMonth(previous.getMonth() - 1);
@@ -4277,6 +4310,12 @@ export function App() {
               : <p className="calendar-agenda-empty">V tomto mesiaci zatiaľ nie sú naplánované žiadne udalosti ani zákazky.</p>}
           </div>
         </section>
+        {workOrderPopupId && <div className="modal-backdrop work-order-modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            setWorkOrderPopupId(null);
+            setExpandedWorkOrderId(null);
+          }
+        }} />}
         <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
           {categories.map((category) => <button key={category.id} type="button" className={`work-order-tab ${workOrderTab === category.id ? "active" : ""}`} onClick={() => setWorkOrderTab(category.id)}>
             <span>{category.label}</span><b>{category.count}</b>
@@ -4307,11 +4346,22 @@ export function App() {
               const phoneDigits = workOrder.contact_phone?.replace(/\D/g, "") ?? "";
               const isExpanded = expandedWorkOrderId === workOrder.id;
               const canReassignTo = employees.filter((employee) => !assignments.some((assignment) => assignment.user_id === employee.user_id));
-              return <article className="panel work-order-card" id={`work-order-${workOrder.id}`} key={workOrder.id}>
+              return               <article
+                className={`panel work-order-card ${workOrderPopupId === workOrder.id ? "work-order-card-modal" : ""}`}
+                id={`work-order-${workOrder.id}`}
+                key={workOrder.id}
+                role={workOrderPopupId === workOrder.id ? "dialog" : undefined}
+                aria-modal={workOrderPopupId === workOrder.id ? true : undefined}
+                aria-labelledby={workOrderPopupId === workOrder.id ? `work-order-title-${workOrder.id}` : undefined}
+              >
                 <div className="work-order-heading">
-                  <div><span className="eyebrow">ZÁKAZKA</span><h2>{workOrder.title}</h2></div>
+                  <div><span className="eyebrow">ZÁKAZKA</span><h2 id={`work-order-title-${workOrder.id}`}>{workOrder.title}</h2></div>
                   <span className={`status-pill work-order-status work-order-${workOrder.status.toLowerCase()}`}>{workOrderStatusName(workOrder.status)}</span>
                   <span className={`work-order-type-pill work-order-type-${workOrder.work_type.toLowerCase()}`}>{WORK_ORDER_TYPE_LABELS[workOrder.work_type]}</span>
+                  {workOrderPopupId === workOrder.id && <button type="button" className="logout-button work-order-modal-close" aria-label="Zavrieť zákazku" onClick={() => {
+                    setWorkOrderPopupId(null);
+                    setExpandedWorkOrderId(null);
+                  }}><X size={18} /></button>}
                 </div>
                 <div className="work-order-summary">
                   <span className={overdue ? "work-order-overdue" : ""}><CalendarDays size={14} />{dateLabel(`${workOrder.due_date}T12:00:00`)}{workOrder.starts_at ? ` · ${workOrder.starts_at.slice(0, 5)}` : workOrder.time_to_arrange ? " · dohodnúť čas" : ""}</span>
@@ -4452,6 +4502,9 @@ export function App() {
           <div className="form-actions"><button className="button button-quiet" onClick={() => setSelectedCalendarOrder(null)}>Zavrieť</button><button className="button button-primary button-small" onClick={() => {
             const orderId = selectedCalendarOrder.id;
             setSelectedCalendarOrder(null);
+            setWorkOrderTab("ALL");
+            setExpandedWorkOrderId(orderId);
+            setWorkOrderPopupId(orderId);
             window.setTimeout(() => document.getElementById(`work-order-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
           }}>Otvoriť zákazku</button></div>
         </section>
@@ -5103,12 +5156,16 @@ export function App() {
                 </div>
                 {!activeShift
                   ? <button className="button button-primary" disabled={busy} onClick={() => void attendanceAction("start_attendance")}><Play size={16} /> Začať pracovať</button>
-                  : activeBreak
-                    ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
-                    : <div className="attendance-clock-actions">
-                      <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
-                      <button className="button button-danger" disabled={busy} onClick={requestEndAttendance}><Square size={15} /> Ukončiť prácu</button>
-                    </div>}
+                  : <div className="attendance-clock-actions">
+                    {activeBreak
+                      ? <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("end_attendance_break")}><Coffee size={16} /> Ukončiť prestávku</button>
+                      : <>
+                        <button className="button button-outline" disabled={busy} onClick={() => void attendanceAction("start_attendance_break")}><Coffee size={16} /> Začať prestávku</button>
+                        <button className="button button-danger" disabled={busy} onClick={requestEndAttendance}><Square size={15} /> Ukončiť prácu</button>
+                      </>}
+                    <button type="button" className="button button-outline" onClick={() => startEditingAttendanceShift(activeShift)}><Pencil size={14} /> Opraviť čas zmeny</button>
+                  </div>}
+                {activeShift && renderAttendanceShiftEditor(activeShift)}
               </section>}
               {isEmployeeUser && (() => {
                 const myOrders = workOrders.filter((order) =>
@@ -5139,7 +5196,12 @@ export function App() {
                           <div className="work-order-actions">
                             <a className="button button-outline button-small" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address)}`} target="_blank" rel="noreferrer"><Navigation size={14} /> Navigovať</a>
                             {order.contact_phone && <a className="button button-outline button-small" href={`tel:${order.contact_phone}`}><Phone size={14} /> Zavolať</a>}
-                            <button className="button button-outline button-small" onClick={() => setPage("workOrders")}>Otvoriť zákazku</button>
+                            <button className="button button-outline button-small" onClick={() => {
+                              setWorkOrderTab("ALL");
+                              setExpandedWorkOrderId(order.id);
+                              setWorkOrderPopupId(order.id);
+                              setPage("workOrders");
+                            }}>Otvoriť zákazku</button>
                           </div>
                         </div>}
                       </li>;
@@ -5369,8 +5431,8 @@ export function App() {
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="detail-actions">
             {isManager && selectedEntry.status === "PENDING" && <><button className="button button-outline button-small" disabled={busy} onClick={() => void changeReview(selectedEntry, "REJECTED")}>Vrátiť na opravu</button><button className="button button-primary button-small" disabled={busy} onClick={() => void changeReview(selectedEntry, "APPROVED")}><CheckCircle2 size={15} /> Schváliť</button></>}
-            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-outline button-small" disabled={busy} onClick={() => { setEditingEntry(selectedEntry); setPendingPhotos([]); setSelectedId(null); setShowEntryForm(true); setError(""); }}><Pencil size={14} /> Upraviť</button>}
-            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status !== "APPROVED")) && <button className="button button-danger button-small" disabled={busy} onClick={() => void removeEntry(selectedEntry)}><Trash2 size={14} /> Odstrániť</button>}
+            {(isManager || selectedEntry.user_id === session.user.id) && <button className="button button-outline button-small" disabled={busy} onClick={() => { setEditingEntry(selectedEntry); setPendingPhotos([]); setSelectedId(null); setShowEntryForm(true); setError(""); }}><Pencil size={14} /> Upraviť</button>}
+            {(isManager || (selectedEntry.user_id === session.user.id && selectedEntry.status === "PENDING")) && <button className="button button-danger button-small" disabled={busy} onClick={() => void removeEntry(selectedEntry)}><Trash2 size={14} /> Odstrániť</button>}
           </div>
         </section>
       </div>}

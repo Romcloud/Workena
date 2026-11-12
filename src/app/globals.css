@@ -477,6 +477,9 @@ button:disabled { opacity: .65; cursor: wait; }
 .profile-plan-selected { border-color: #75a584; box-shadow: 0 0 0 2px #75a5842b; }
 .profile-plan-current { color: var(--green-dark); font-weight: 700; }
 .work-order-card { display: grid; gap: 10px; padding: 14px 16px; }
+.work-order-card-modal { position: fixed; z-index: 101; top: 50%; left: 50%; width: min(920px, calc(100vw - 32px)); max-height: min(90vh, 900px); overflow-y: auto; transform: translate(-50%, -50%); }
+.work-order-modal-backdrop { z-index: 100; }
+.work-order-modal-close { flex: 0 0 auto; margin-left: auto; }
 .work-order-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .work-order-heading h2 { margin: 4px 0 0; font: 700 17px/1.35 var(--serif); }
 .work-order-status { flex: 0 0 auto; padding: 5px 9px; }
@@ -681,6 +684,8 @@ button:disabled { opacity: .65; cursor: wait; }
   .calendar-heading-actions > .button { min-height: 38px; padding: 0 10px; font-size: 10px; }
   .calendar-heading-actions .attendance-month-switch { flex: 1; justify-content: space-between; }
   .calendar-heading-actions .attendance-month-switch > strong { min-width: 0; text-align: center; }
+  .calendar-heading-actions .calendar-month-switch,
+  .calendar-heading-actions .calendar-expand-toggle { display: none; }
   .calendar-google-sync { align-items: stretch; flex-direction: column; padding: 12px; }
   .calendar-google-sync strong { font-size: 12px; }
   .calendar-google-sync small { font-size: 10px; line-height: 1.5; }

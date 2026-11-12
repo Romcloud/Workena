@@ -78,18 +78,23 @@ function normalizedDate(value: unknown, optional = false) {
   const raw = String(value ?? "").trim();
   if (!raw && optional) return null;
   let date = raw;
-  const skDate = /^(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})$/.exec(raw);
-  if (skDate) date = `${skDate[3]}-${skDate[2].padStart(2, "0")}-${skDate[1].padStart(2, "0")}`;
+  const yearFirst = /^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/.exec(raw);
+  if (yearFirst) date = `${yearFirst[1]}-${yearFirst[2].padStart(2, "0")}-${yearFirst[3].padStart(2, "0")}`;
   const monthYear = /^(\d{1,2})\/(\d{2}|\d{4})$/.exec(raw);
   if (monthYear) {
     const month = Number(monthYear[1]);
     const year = monthYear[2].length === 2 ? 2000 + Number(monthYear[2]) : Number(monthYear[2]);
     if (month >= 1 && month <= 12) date = `${year}-${String(month).padStart(2, "0")}-01`;
   }
+  const dayMonthYear = /^(\d{1,2})[./-]\s*(\d{1,2})[./-]\s*(\d{2}|\d{4})$/.exec(raw);
+  if (dayMonthYear) {
+    const year = dayMonthYear[3].length === 2 ? 2000 + Number(dayMonthYear[3]) : Number(dayMonthYear[3]);
+    date = `${year}-${dayMonthYear[2].padStart(2, "0")}-${dayMonthYear[1].padStart(2, "0")}`;
+  }
   date = date.slice(0, 10);
   const parsedDate = new Date(`${date}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
-    throw new Error(`Neplatný dátum v riadku tabuľky: ${raw || "(prázdny)"}. Použite formát RRRR-MM-DD, D.M.RRRR alebo M/RR.`);
+    throw new Error(`Neplatný dátum v riadku tabuľky: ${raw || "(prázdny)"}. Použite napríklad RRRR-MM-DD, D.M.RRRR, D/M/RRRR alebo M/RR.`);
   }
   return date;
 }
