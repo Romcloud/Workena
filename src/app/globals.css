@@ -925,6 +925,21 @@ button:disabled { opacity: .65; cursor: wait; }
 @media (max-width: 720px) {
   .brand-button { margin-bottom: 0; }
   .modal-backdrop { align-items: end; padding: 0; }
+  .measurement-modal, .measurement-picker {
+    width: 100%;
+    min-width: 0;
+    max-height: calc(100dvh - env(safe-area-inset-top));
+    padding: 15px 15px calc(15px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 16px 16px 0 0;
+  }
+  .measurement-modal { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+  .measurement-modal .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .measurement-modal .field, .measurement-picker label { min-width: 0; }
+  .measurement-modal input, .measurement-modal select, .measurement-picker select { width: 100%; min-width: 0; }
+  .measurement-modal .form-actions, .measurement-picker .form-actions { flex-wrap: wrap; }
+  .measurement-modal .form-actions > .button, .measurement-picker .form-actions > .button { flex: 1 1 100%; }
   .detail-modal { width: 100%; max-height: calc(92vh - env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }
   .detail-actions { flex-wrap: wrap; }
   .member-row { gap: 7px; }

@@ -89,7 +89,9 @@ Pred nasadením výberu zákazníka pri novej zákazke aplikujte aj všetky nasl
 
 ### Záznamy zo zamerania
 
-Pred nasadením funkcie zameraní aplikujte v Supabase SQL Editore migráciu [`20261116000100_work_order_measurements.sql`](./supabase/migrations/20261116000100_work_order_measurements.sql). Následne nasaďte aktualizovanú Edge Function `send-email` príkazom `supabase functions deploy send-email`; na odosielanie musí byť nakonfigurovaný secret `RESEND_API_KEY`. V detaile prijatej zákazky otvorte **Zamerania**, vyplňte technické údaje a rozmery okien alebo miestností a vyberte **Uložiť a stiahnuť** alebo **Uložiť a poslať email**. Uložené záznamy zostávajú v podkarte **Zamerania** danej firmy.
+Pred nasadením funkcie zameraní aplikujte v Supabase SQL Editore migrácie [`20261116000100_work_order_measurements.sql`](./supabase/migrations/20261116000100_work_order_measurements.sql) a [`20261116000200_standalone_customer_measurements.sql`](./supabase/migrations/20261116000200_standalone_customer_measurements.sql). Následne nasaďte aktualizovanú Edge Function `send-email` príkazom `supabase functions deploy send-email`; na odosielanie musí byť nakonfigurovaný secret `RESEND_API_KEY`.
+
+V detaile zákazky otvorte **Zamerania** alebo tlačidlom **Nové zameranie** vyberte zákazku či samostatného zákazníka. Záznam možno uložiť a stiahnuť ako HTML alebo odoslať na e-mail prihláseného účtu. Uložené záznamy možno upraviť a stiahnuť ako HTML alebo PDF; záznamy dokončených zákaziek možno stiahnuť, ale nie upravovať. Samostatné zamerania sú dostupné vlastníkom a obchodníkom podľa oprávnení k zákazníkovi.
 
 ### Synchronizácia zákaziek s Google Kalendárom
 

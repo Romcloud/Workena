@@ -196,7 +196,8 @@ export type WorkOrderMeasurementWindow = {
 export type WorkOrderMeasurement = {
   id: string;
   company_id: string;
-  work_order_id: string;
+  work_order_id: string | null;
+  customer_id: string | null;
   created_by: string;
   control_type: "MANUAL" | "IO" | "WT" | "SOLAR" | "TAHOMA";
   color: string;

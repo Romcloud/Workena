@@ -368,17 +368,34 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (measurementError) return json(500, { error: measurementError.message });
       if (!measurement) return json(403, { error: "Zameranie neexistuje alebo k nemu nemáte prístup." });
-      const { data: workOrder, error: workOrderError } = await userClient
-        .from("work_orders")
-        .select("title, customer_name")
-        .eq("id", measurement.work_order_id)
-        .maybeSingle();
-      if (workOrderError) return json(500, { error: workOrderError.message });
-      if (!workOrder) return json(403, { error: "K zákazke tohto zamerania nemáte prístup." });
+      let customerName = "";
+      let orderTitle = "Samostatné zameranie";
+      if (measurement.work_order_id) {
+        const { data: workOrder, error: workOrderError } = await userClient
+          .from("work_orders")
+          .select("title, customer_name")
+          .eq("id", measurement.work_order_id)
+          .maybeSingle();
+        if (workOrderError) return json(500, { error: workOrderError.message });
+        if (!workOrder) return json(403, { error: "K zákazke tohto zamerania nemáte prístup." });
+        customerName = workOrder.customer_name ?? "";
+        orderTitle = workOrder.title;
+      } else if (measurement.customer_id) {
+        const { data: customer, error: customerError } = await userClient
+          .from("customers")
+          .select("full_name")
+          .eq("id", measurement.customer_id)
+          .maybeSingle();
+        if (customerError) return json(500, { error: customerError.message });
+        if (!customer) return json(403, { error: "K zákazníkovi tohto zamerania nemáte prístup." });
+        customerName = customer.full_name;
+      } else {
+        return json(403, { error: "Zameranie nie je priradené k zákazke ani zákazníkovi." });
+      }
       recipients = [userEmail];
       templateData = {
-        customerName: workOrder.customer_name ?? "",
-        orderTitle: workOrder.title,
+        customerName,
+        orderTitle,
         measurementId: measurement.id,
         controlType: measurement.control_type,
         color: measurement.color,
