@@ -124,9 +124,16 @@ const MEASUREMENT_BOX_LABELS: Record<WorkOrderMeasurement["box_type"], string> =
 const MEASUREMENT_REVEAL_LABELS: Record<WorkOrderMeasurement["reveal_type"], string> = {
   STRAIGHT: "Rovná",
   OPEN: "Otvorená",
-  OTHER: "Iné",
+  OTHER: "Iná",
 };
 const MEASUREMENT_GUIDE_TYPES: WorkOrderMeasurementWindow["guide_type"][] = ["S", "Z", "O", "STF", "STF2"];
+const MEASUREMENT_GUIDE_LABELS: Record<WorkOrderMeasurementWindow["guide_type"], string> = {
+  S: "Typ S",
+  Z: "Typ Z",
+  O: "Typ O",
+  STF: "Typ STF",
+  STF2: "Typ STF2",
+};
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Požiadavku sa nepodarilo dokončiť. Skúste to znova.";
@@ -174,13 +181,20 @@ function escapeHtml(value: string) {
   })[character] ?? character);
 }
 
+function measurementControlsLabel(controls: WorkOrderMeasurement["controls"], other?: string | null) {
+  if (controls === "NONE") return "Nie";
+  if (controls === "OTHER") return `Iné${other ? `: ${other}` : ""}`;
+  if (controls === "1") return "1 ovládač";
+  return ["2", "3", "4"].includes(controls) ? `${controls} ovládače` : `${controls} ovládačov`;
+}
+
 function downloadMeasurementReport(order: WorkOrder, measurement: WorkOrderMeasurement) {
   const rows = measurement.windows.map((window, index) => `
     <tr>
       <td>${index + 1}. ${escapeHtml(window.room)}</td>
       <td>${escapeHtml(window.width)} mm</td>
       <td>${escapeHtml(window.height)} mm</td>
-      <td>${escapeHtml(window.guide_type)}</td>
+      <td>${escapeHtml(MEASUREMENT_GUIDE_LABELS[window.guide_type])}</td>
       <td>${escapeHtml(window.note || "—")}</td>
     </tr>`).join("");
   const html = `<!doctype html>
@@ -194,14 +208,14 @@ function downloadMeasurementReport(order: WorkOrder, measurement: WorkOrderMeasu
 <dl>
 <dt>Typ ovládania</dt><dd>${escapeHtml(MEASUREMENT_CONTROL_LABELS[measurement.control_type])}</dd>
 <dt>Farba</dt><dd>${escapeHtml(measurement.color)}</dd>
-<dt>Box</dt><dd>${escapeHtml(MEASUREMENT_BOX_LABELS[measurement.box_type])}</dd>
-<dt>Špaleta</dt><dd>${escapeHtml(MEASUREMENT_REVEAL_LABELS[measurement.reveal_type])}</dd>
+<dt>Typ boxu</dt><dd>${escapeHtml(MEASUREMENT_BOX_LABELS[measurement.box_type])}</dd>
+<dt>Typ špalety</dt><dd>${escapeHtml(MEASUREMENT_REVEAL_LABELS[measurement.reveal_type])}</dd>
 <dt>Bočnice</dt><dd>${measurement.side_panels ? "Áno" : "Nie"}</dd>
-<dt>Ovládače</dt><dd>${measurement.controls === "OTHER" ? `Iné${measurement.controls_other ? `: ${escapeHtml(measurement.controls_other)}` : ""}` : measurement.controls === "NONE" ? "Nie" : escapeHtml(measurement.controls)}</dd>
+<dt>Počet ovládačov</dt><dd>${escapeHtml(measurementControlsLabel(measurement.controls, measurement.controls_other))}</dd>
 <dt>Kontakt</dt><dd>${escapeHtml([measurement.customer_email, measurement.customer_phone].filter(Boolean).join(" · ") || "—")}</dd>
 </dl>
 <h2>Okná / miestnosti</h2>
-<table><thead><tr><th>Okno / miestnosť</th><th>Šírka</th><th>Výška</th><th>Vodiaca lišta</th><th>Poznámka</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr><th>Okno / miestnosť</th><th>Šírka</th><th>Výška</th><th>Typ vodiacej lišty</th><th>Poznámka</th></tr></thead><tbody>${rows}</tbody></table>
 </html>`;
   const objectUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
   const anchor = document.createElement("a");
@@ -4401,6 +4415,11 @@ export function App() {
             </form>}
           </section>
         </div>}
+        <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
+          {categories.map((category) => <button key={category.id} type="button" className={`work-order-tab ${workOrderTab === category.id ? "active" : ""}`} onClick={() => setWorkOrderTab(category.id)}>
+            <span>{category.label}</span><b>{category.count}</b>
+          </button>)}
+        </nav>
         <section className="records-section">
           <div className="section-title-row">
             <div><h2><CalendarDays size={17} /> Kalendár zákaziek</h2><p>Aktívne zákazky a schválené neprítomnosti. V mobile sa zobrazujú nadchádzajúce aj nevybavené zákazky po termíne.</p></div>
@@ -4525,11 +4544,6 @@ export function App() {
             setExpandedWorkOrderId(null);
           }
         }} />}
-        <nav className="work-order-tabs" aria-label="Podkarty zákaziek">
-          {categories.map((category) => <button key={category.id} type="button" className={`work-order-tab ${workOrderTab === category.id ? "active" : ""}`} onClick={() => setWorkOrderTab(category.id)}>
-            <span>{category.label}</span><b>{category.count}</b>
-          </button>)}
-        </nav>
         <section className="records-section">
           <div className="section-title-row"><div><h2><ClipboardList size={17} /> Zoznam zákaziek</h2><p>{isManager ? "Zákazky celej firmy." : "Zákazky priradené vám."}</p></div><span className="count-pill">{filteredWorkOrders.length} zákaziek</span></div>
           <div className="panel work-order-filter-bar">
@@ -4724,8 +4738,8 @@ export function App() {
                   ? <p className="muted">K tejto zákazke ešte nie je uložené žiadne zameranie.</p>
                   : <div className="measurement-record-list">{workOrderMeasurements.map((measurement) => <article className="measurement-record" key={measurement.id}>
                     <div className="measurement-record-heading"><strong>{MEASUREMENT_CONTROL_LABELS[measurement.control_type]} · {measurement.color}</strong><small>{dateLabel(measurement.created_at)}</small></div>
-                    <p>{measurement.windows.length} {measurement.windows.length === 1 ? "okno / miestnosť" : "okná / miestnosti"} · {MEASUREMENT_BOX_LABELS[measurement.box_type]} box · {measurement.controls === "NONE" ? "bez ovládača" : `${measurement.controls === "OTHER" ? "iné" : measurement.controls} ovládač(e)`}</p>
-                    <ul>{measurement.windows.map((window, index) => <li key={`${measurement.id}-${index}`}><strong>{window.room}</strong> · {window.width} × {window.height} mm · lišta {window.guide_type}{window.note ? ` · ${window.note}` : ""}</li>)}</ul>
+                    <p>Typ boxu: {MEASUREMENT_BOX_LABELS[measurement.box_type]} · Typ špalety: {MEASUREMENT_REVEAL_LABELS[measurement.reveal_type]} · Bočnice: {measurement.side_panels ? "Áno" : "Nie"} · Počet ovládačov: {measurementControlsLabel(measurement.controls, measurement.controls_other)}</p>
+                    <ul>{measurement.windows.map((window, index) => <li key={`${measurement.id}-${index}`}><strong>{window.room}</strong> · {window.width} × {window.height} mm · Vodiaca lišta {MEASUREMENT_GUIDE_LABELS[window.guide_type]}{window.note ? ` · Poznámka: ${window.note}` : ""}</li>)}</ul>
                     <button type="button" className="button button-outline button-small" onClick={() => downloadMeasurementReport(order, measurement)}><Download size={14} /> Stiahnuť záznam</button>
                   </article>)}</div>}
             </section>
@@ -4735,23 +4749,24 @@ export function App() {
                 <div className="form-grid">
                   <label className="field"><span>Typ ovládania</span><select name="control_type" defaultValue="MANUAL">{MEASUREMENT_CONTROL_TYPES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
                   <label className="field"><span>Farba</span><input name="color" maxLength={120} placeholder="Zadajte farbu" required /></label>
-                  <label className="field"><span>Box</span><select name="box_type" defaultValue="SURFACE"><option value="SURFACE">Priznaný</option><option value="RECESSED">Podomietkový</option></select></label>
-                  <label className="field"><span>Špaleta</span><select name="reveal_type" defaultValue="STRAIGHT"><option value="STRAIGHT">Rovná</option><option value="OPEN">Otvorená</option><option value="OTHER">Iné</option></select></label>
+                  <label className="field"><span>Typ boxu</span><select name="box_type" defaultValue="SURFACE"><option value="SURFACE">Priznaný</option><option value="RECESSED">Podomietkový</option></select></label>
+                  <label className="field"><span>Typ špalety</span><select name="reveal_type" defaultValue="STRAIGHT"><option value="STRAIGHT">Rovná</option><option value="OPEN">Otvorená</option><option value="OTHER">Iná</option></select></label>
                   <label className="field"><span>Bočnice</span><select name="side_panels" defaultValue="NO"><option value="YES">Áno</option><option value="NO">Nie</option></select></label>
                   <label className="field"><span>Ovládače</span><select name="controls" value={measurementControls} onChange={(event) => setMeasurementControls(event.target.value as WorkOrderMeasurement["controls"])}><option value="NONE">Nie</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="OTHER">Iné</option></select></label>
                   {measurementControls === "OTHER" && <label className="field"><span>Počet / popis ovládačov</span><input name="controls_other" maxLength={120} placeholder="Doplňte údaj" required /></label>}
                 </div>
                 <div className="measurement-windows">
-                  <div className="section-title-row"><div><h3>Okná / miestnosti</h3><p>Najviac 50 položiek v jednom zázname.</p></div><button type="button" className="button button-outline button-small" disabled={measurementWindowIndexes.length >= 50} onClick={() => setMeasurementWindowIndexes((current) => [...current, Math.max(-1, ...current) + 1])}><Plus size={14} /> Pridať ďalšie okno</button></div>
+                  <div className="section-title-row"><div><h3>Okná / miestnosti</h3><p>Najviac 50 položiek v jednom zázname.</p></div></div>
                   {measurementWindowIndexes.map((index, row) => <div className="measurement-window" key={index}>
                     <div className="measurement-window-heading"><strong>Okno / miestnosť {row + 1}</strong>{row > 0 && <button type="button" className="button button-quiet button-small" onClick={() => setMeasurementWindowIndexes((current) => current.filter((value) => value !== index))}>Odobrať</button>}</div>
                     <div className="form-grid">
                       <label className="field"><span>Okno / miestnosť</span><input name={`window_room_${index}`} maxLength={160} placeholder="napr. Obývačka – ľavé okno" required /></label>
                       <label className="field"><span>Šírka (mm)</span><input type="number" name={`window_width_${index}`} min="1" max="99999" step="1" required /></label>
                       <label className="field"><span>Výška (mm)</span><input type="number" name={`window_height_${index}`} min="1" max="99999" step="1" required /></label>
-                      <label className="field"><span>Typ vodiacej lišty</span><select name={`window_guide_${index}`} defaultValue="S">{MEASUREMENT_GUIDE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+                      <label className="field"><span>Typ vodiacej lišty</span><select name={`window_guide_${index}`} defaultValue="S">{MEASUREMENT_GUIDE_TYPES.map((type) => <option key={type} value={type}>{MEASUREMENT_GUIDE_LABELS[type]}</option>)}</select></label>
                       <label className="field measurement-window-note"><span>Poznámka <small>voliteľná</small></span><input name={`window_note_${index}`} maxLength={1000} /></label>
                     </div>
+                    <button type="button" className="button button-outline button-small" disabled={measurementWindowIndexes.length >= 50} onClick={() => setMeasurementWindowIndexes((current) => [...current, Math.max(-1, ...current) + 1])}><Plus size={14} /> Pridať ďalšie okno</button>
                   </div>)}
                 </div>
               </fieldset>

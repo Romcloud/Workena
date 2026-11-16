@@ -164,12 +164,44 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
     case "work_order_measurement": {
       const customerName = escapeHtml(data.customerName ?? "");
       const orderTitle = escapeHtml(data.orderTitle ?? "Zákazka");
+      const controlLabels: Record<string, string> = {
+        MANUAL: "Manuál",
+        IO: "iO",
+        WT: "WT",
+        SOLAR: "Solar",
+        TAHOMA: "Tahoma",
+      };
+      const boxLabels: Record<string, string> = {
+        SURFACE: "Priznaný",
+        RECESSED: "Podomietkový",
+      };
+      const revealLabels: Record<string, string> = {
+        STRAIGHT: "Rovná",
+        OPEN: "Otvorená",
+        OTHER: "Iná",
+      };
+      const guideLabels: Record<string, string> = {
+        S: "Typ S",
+        Z: "Typ Z",
+        O: "Typ O",
+        STF: "Typ STF",
+        STF2: "Typ STF2",
+      };
+      const controlCount = data.controls === "NONE"
+        ? "Nie"
+        : data.controls === "OTHER"
+          ? `Iné${data.controlsOther ? `: ${data.controlsOther}` : ""}`
+          : data.controls === "1"
+            ? "1 ovládač"
+            : ["2", "3", "4"].includes(data.controls ?? "")
+              ? `${data.controls} ovládače`
+          : data.controls ?? "";
       const windowRows = (data.windows ?? []).map((window, index) => `
         <tr>
           <td style="padding:8px;border:1px solid #e7e9f2;">${index + 1}. ${escapeHtml(window.room ?? "")}</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.width ?? "")} mm</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.height ?? "")} mm</td>
-          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.guide_type ?? "")}</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(guideLabels[window.guide_type ?? ""] ?? window.guide_type ?? "")}</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.note ?? "—")}</td>
         </tr>`).join("");
       const emailSubjectName = (data.customerName || data.orderTitle || "zákazka").replace(/[\r\n]+/g, " ").slice(0, 180);
@@ -178,16 +210,16 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
         html: layout("Záznam zo zamerania", `
           <p>Dobrý deň,</p>
           <p><strong>Zákazník:</strong> ${customerName || "—"}<br/><strong>Zákazka:</strong> ${orderTitle}</p>
-          <p><strong>Typ ovládania:</strong> ${escapeHtml(data.controlType ?? "")}<br/>
+          <p><strong>Typ ovládania:</strong> ${escapeHtml(controlLabels[data.controlType ?? ""] ?? data.controlType ?? "")}<br/>
           <strong>Farba:</strong> ${escapeHtml(data.color ?? "")}<br/>
-          <strong>Box:</strong> ${escapeHtml(data.boxType ?? "")}<br/>
-          <strong>Špaleta:</strong> ${escapeHtml(data.revealType ?? "")}<br/>
+          <strong>Typ boxu:</strong> ${escapeHtml(boxLabels[data.boxType ?? ""] ?? data.boxType ?? "")}<br/>
+          <strong>Typ špalety:</strong> ${escapeHtml(revealLabels[data.revealType ?? ""] ?? data.revealType ?? "")}<br/>
           <strong>Bočnice:</strong> ${data.sidePanels ? "Áno" : "Nie"}<br/>
-          <strong>Ovládače:</strong> ${escapeHtml(data.controls === "OTHER" ? `Iné${data.controlsOther ? `: ${data.controlsOther}` : ""}` : data.controls ?? "")}<br/>
+          <strong>Počet ovládačov:</strong> ${escapeHtml(controlCount)}<br/>
           <strong>Kontakt:</strong> ${escapeHtml([data.customerEmail, data.customerPhone].filter(Boolean).join(" · ") || "—")}</p>
           <h2 style="font-size:16px;">Okná / miestnosti</h2>
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
-            <thead><tr><th style="padding:8px;border:1px solid #e7e9f2;">Okno / miestnosť</th><th style="padding:8px;border:1px solid #e7e9f2;">Šírka</th><th style="padding:8px;border:1px solid #e7e9f2;">Výška</th><th style="padding:8px;border:1px solid #e7e9f2;">Vodiaca lišta</th><th style="padding:8px;border:1px solid #e7e9f2;">Poznámka</th></tr></thead>
+            <thead><tr><th style="padding:8px;border:1px solid #e7e9f2;">Okno / miestnosť</th><th style="padding:8px;border:1px solid #e7e9f2;">Šírka</th><th style="padding:8px;border:1px solid #e7e9f2;">Výška</th><th style="padding:8px;border:1px solid #e7e9f2;">Typ vodiacej lišty</th><th style="padding:8px;border:1px solid #e7e9f2;">Poznámka</th></tr></thead>
             <tbody>${windowRows}</tbody>
           </table>
           <p style="font-size:12px;color:#6b7280;">Vytvorené: ${escapeHtml(data.createdAt ?? "")}</p>
