@@ -87,6 +87,10 @@ Po týchto migráciách spustite [`20261103000300_company_invitations.sql`](./su
 
 Pred nasadením výberu zákazníka pri novej zákazke aplikujte aj všetky nasledujúce nepoužité migrácie v poradí vrátane [`20261109000100_work_order_customers_and_calendar_assignment.sql`](./supabase/migrations/20261109000100_work_order_customers_and_calendar_assignment.sql).
 
+### Záznamy zo zamerania
+
+Pred nasadením funkcie zameraní aplikujte v Supabase SQL Editore migráciu [`20261116000100_work_order_measurements.sql`](./supabase/migrations/20261116000100_work_order_measurements.sql). Následne nasaďte aktualizovanú Edge Function `send-email` príkazom `supabase functions deploy send-email`; na odosielanie musí byť nakonfigurovaný secret `RESEND_API_KEY`. V detaile prijatej zákazky otvorte **Zamerania**, vyplňte technické údaje a rozmery okien alebo miestností a vyberte **Uložiť a stiahnuť** alebo **Uložiť a poslať email**. Uložené záznamy zostávajú v podkarte **Zamerania** danej firmy.
+
 ### Synchronizácia zákaziek s Google Kalendárom
 
 Každý aktívny člen firmy môže v karte **Zákazky** pripojiť svoj Google účet. Synchronizácia zákaziek je samostatná pre každý účet: každému členovi vrátane vlastníka sa synchronizujú iba zákazky, ku ktorým je priradený. Už synchronizované zákazky, ku ktorým člen nie je priradený, sa pri ďalšej synchronizácii odstránia z jeho Google Kalendára. Zmeny názvu, adresy, opisu a termínu sa prenášajú oboma smermi. Všetky udalosti z primárneho Google Kalendára pripojeného účtu sa zároveň načítajú a zobrazia vo vybranom mesiaci kalendára Workena, zoradené spolu so zákazkami podľa času. Tieto osobné udalosti sú iba na čítanie a neukladajú sa ani neimportujú ako zákazky. Dokončenie zákazky vo Workene odstráni jej spárovanú udalosť z Google Kalendára. Ak sa udalosť odstráni v Google Kalendári, zákazka zostane vo Workene a udalosť sa vytvorí znovu až po ďalšej zmene zákazky.

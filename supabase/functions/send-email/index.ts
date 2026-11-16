@@ -12,7 +12,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type EmailTemplate = "company_welcome" | "company_join_request" | "company_invitation" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice";
+type EmailTemplate = "company_welcome" | "company_join_request" | "company_invitation" | "license_requested" | "payment_confirmed" | "payment_reminder" | "admin_custom" | "maintenance_notice" | "work_order_measurement";
 
 type TemplateData = {
   companyName?: string;
@@ -31,6 +31,20 @@ type TemplateData = {
   invitationId?: string;
   invitationUrl?: string;
   invitedEmail?: string;
+  customerName?: string;
+  orderTitle?: string;
+  measurementId?: string;
+  controlType?: string;
+  color?: string;
+  boxType?: string;
+  revealType?: string;
+  sidePanels?: boolean;
+  controls?: string;
+  controlsOther?: string;
+  windows?: Array<{ room?: string; width?: string; height?: string; guide_type?: string; note?: string }>;
+  customerEmail?: string;
+  customerPhone?: string;
+  createdAt?: string;
 };
 
 function json(status: number, body: Record<string, unknown>) {
@@ -147,6 +161,39 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
           <p>Počas tohto obdobia nemusí byť aplikácia dostupná. Ďakujeme za pochopenie.</p>
         `),
       };
+    case "work_order_measurement": {
+      const customerName = escapeHtml(data.customerName ?? "");
+      const orderTitle = escapeHtml(data.orderTitle ?? "Zákazka");
+      const windowRows = (data.windows ?? []).map((window, index) => `
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${index + 1}. ${escapeHtml(window.room ?? "")}</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.width ?? "")} mm</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.height ?? "")} mm</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.guide_type ?? "")}</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.note ?? "—")}</td>
+        </tr>`).join("");
+      const emailSubjectName = (data.customerName || data.orderTitle || "zákazka").replace(/[\r\n]+/g, " ").slice(0, 180);
+      return {
+        subject: `Zameranie – ${emailSubjectName}`,
+        html: layout("Záznam zo zamerania", `
+          <p>Dobrý deň,</p>
+          <p><strong>Zákazník:</strong> ${customerName || "—"}<br/><strong>Zákazka:</strong> ${orderTitle}</p>
+          <p><strong>Typ ovládania:</strong> ${escapeHtml(data.controlType ?? "")}<br/>
+          <strong>Farba:</strong> ${escapeHtml(data.color ?? "")}<br/>
+          <strong>Box:</strong> ${escapeHtml(data.boxType ?? "")}<br/>
+          <strong>Špaleta:</strong> ${escapeHtml(data.revealType ?? "")}<br/>
+          <strong>Bočnice:</strong> ${data.sidePanels ? "Áno" : "Nie"}<br/>
+          <strong>Ovládače:</strong> ${escapeHtml(data.controls === "OTHER" ? `Iné${data.controlsOther ? `: ${data.controlsOther}` : ""}` : data.controls ?? "")}<br/>
+          <strong>Kontakt:</strong> ${escapeHtml([data.customerEmail, data.customerPhone].filter(Boolean).join(" · ") || "—")}</p>
+          <h2 style="font-size:16px;">Okná / miestnosti</h2>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr><th style="padding:8px;border:1px solid #e7e9f2;">Okno / miestnosť</th><th style="padding:8px;border:1px solid #e7e9f2;">Šírka</th><th style="padding:8px;border:1px solid #e7e9f2;">Výška</th><th style="padding:8px;border:1px solid #e7e9f2;">Vodiaca lišta</th><th style="padding:8px;border:1px solid #e7e9f2;">Poznámka</th></tr></thead>
+            <tbody>${windowRows}</tbody>
+          </table>
+          <p style="font-size:12px;color:#6b7280;">Vytvorené: ${escapeHtml(data.createdAt ?? "")}</p>
+        `),
+      };
+    }
     default:
       throw new Error("Neznáma šablóna emailu.");
   }
@@ -275,6 +322,45 @@ Deno.serve(async (req) => {
         fullName: invitation.full_name,
         invitationUrl,
         invitedEmail: invitation.email,
+      };
+    } else if (body.template === "work_order_measurement") {
+      if (!body.to || body.to.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.to)) {
+        return json(400, { error: "Zadajte platnú e-mailovú adresu príjemcu." });
+      }
+      if (!body.data?.measurementId) return json(400, { error: "Chýba identifikátor zamerania." });
+      const { data: measurement, error: measurementError } = await userClient
+        .from("work_order_measurements")
+        .select("*")
+        .eq("id", body.data.measurementId)
+        .maybeSingle();
+      if (measurementError) return json(500, { error: measurementError.message });
+      if (!measurement) return json(403, { error: "Zameranie neexistuje alebo k nemu nemáte prístup." });
+      if (measurement.customer_email?.toLowerCase() !== body.to.toLowerCase()) {
+        return json(403, { error: "Email možno odoslať iba na adresu uvedenú v zázname zamerania." });
+      }
+      const { data: workOrder, error: workOrderError } = await userClient
+        .from("work_orders")
+        .select("title, customer_name")
+        .eq("id", measurement.work_order_id)
+        .maybeSingle();
+      if (workOrderError) return json(500, { error: workOrderError.message });
+      if (!workOrder) return json(403, { error: "K zákazke tohto zamerania nemáte prístup." });
+      recipients = [body.to];
+      templateData = {
+        customerName: workOrder.customer_name ?? "",
+        orderTitle: workOrder.title,
+        measurementId: measurement.id,
+        controlType: measurement.control_type,
+        color: measurement.color,
+        boxType: measurement.box_type,
+        revealType: measurement.reveal_type,
+        sidePanels: measurement.side_panels,
+        controls: measurement.controls,
+        controlsOther: measurement.controls_other ?? "",
+        windows: Array.isArray(measurement.windows) ? measurement.windows : [],
+        customerEmail: measurement.customer_email ?? "",
+        customerPhone: measurement.customer_phone ?? "",
+        createdAt: new Date(measurement.created_at).toLocaleString("sk-SK"),
       };
     } else if (!body.to || body.to.toLowerCase() !== (userData.user.email ?? "").toLowerCase()) {
       return json(403, { error: "Prístup odmietnutý." });

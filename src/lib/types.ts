@@ -185,6 +185,32 @@ export type WorkOrderPhoto = {
   created_at: string;
 };
 
+export type WorkOrderMeasurementWindow = {
+  room: string;
+  width: string;
+  height: string;
+  guide_type: "S" | "Z" | "O" | "STF" | "STF2";
+  note: string;
+};
+
+export type WorkOrderMeasurement = {
+  id: string;
+  company_id: string;
+  work_order_id: string;
+  created_by: string;
+  control_type: "MANUAL" | "IO" | "WT" | "SOLAR" | "TAHOMA";
+  color: string;
+  box_type: "SURFACE" | "RECESSED";
+  reveal_type: "STRAIGHT" | "OPEN" | "OTHER";
+  side_panels: boolean;
+  controls: "NONE" | "1" | "2" | "3" | "4" | "5" | "OTHER";
+  controls_other: string | null;
+  windows: WorkOrderMeasurementWindow[];
+  customer_email: string | null;
+  customer_phone: string | null;
+  created_at: string;
+};
+
 export type AbsenceType = "VACATION" | "HOME_OFFICE" | "OUT_OF_OFFICE" | "OTHER";
 export type AbsenceStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 

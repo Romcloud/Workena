@@ -36,6 +36,7 @@ export function PrivacyPolicy({ onBack }: PrivacyPolicyProps) {
             <li>údaje o firme a fakturácii, členstve, pracovnej roli a oprávneniach;</li>
             <li>dochádzku, prestávky, pracovné záznamy, neprítomnosti, zákazky, fotografie, prílohy a záznamy jázd;</li>
             <li>údaje o zákazníkoch, kontaktné údaje, dopyty a približné ceny, ktoré do aplikácie vloží používateľ;</li>
+            <li>údaje zo zamerania zákazky vrátane rozmerov okien alebo miestností, technických nastavení a voliteľných kontaktných údajov zákazníka;</li>
             <li>ak používateľ zapne prepojenie Google Kalendára: identifikátor Google účtu a OAuth tokeny potrebné na pripojenie; názov, dátum a čas, miesto a opis udalostí primárneho kalendára sa načítajú na zobrazenie vybraného mesiaca, pričom údaje týchto udalostí sa v Workene trvalo neukladajú; pri obojsmernej synchronizácii zákaziek sa spracúvajú aj identifikátory a údaje udalostí prepojených so zákazkami Workena;</li>
             <li>údaje potrebné na vybavenie otázky, žiadosti o licenciu, platobnej požiadavky alebo reklamácie služby;</li>
             <li>pri zapnutom GoPay sandboxe testovacie číslo objednávky, identifikátor platby, zvolený balík, sumu a stav platby.</li>
@@ -60,6 +61,7 @@ export function PrivacyPolicy({ onBack }: PrivacyPolicyProps) {
           <h2>4. Príjemcovia údajov</h2>
           <p>Údaje sprístupňujeme iba v rozsahu potrebnom na príslušný účel. Môžu ich spracúvať poskytovatelia technickej prevádzky a hostingu webu, Supabase (autentifikácia, databáza a úložisko), Google (prihlásenie a voliteľná synchronizácia kalendára), Resend (transakčné e-maily), OpenStreetMap Nominatim a OSRM (vyhľadávanie adries a výpočet trás) a GoPay pri zapnutom testovacom platobnom toku. Údaje môžeme poskytnúť účtovníkovi alebo orgánom verejnej moci, ak to vyžaduje zákon. Webová stránka je publikovaná cez GitHub Pages.</p>
           <p>Pri vyhľadávaní adresy alebo výpočte trasy sa príslušné adresy odosielajú použitým mapovým službám. Pri GoPay platbe sa platobné údaje zadávajú a spracúvajú v prostredí GoPay podľa jeho vlastných zásad ochrany osobných údajov.</p>
+          <p>Ak používateľ odošle záznam zo zamerania na uvedený e-mail, jeho obsah sa spracuje prostredníctvom služby Resend a odošle zadanému príjemcovi.</p>
           <p className="legal-placeholder">[Pred spustením produkčných platieb overiť aktuálne sprostredkovateľské zmluvy, umiestnenie a prenosy údajov, subdodávateľov a podmienky GoPay. Pri spracúvaní údajov zamestnancov a zákazníkov firmy uzavrieť potrebnú zmluvu o spracúvaní osobných údajov.]</p>
         </section>
         <section>
