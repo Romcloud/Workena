@@ -324,8 +324,9 @@ Deno.serve(async (req) => {
         invitedEmail: invitation.email,
       };
     } else if (body.template === "work_order_measurement") {
-      if (!body.to || body.to.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.to)) {
-        return json(400, { error: "Zadajte platnú e-mailovú adresu príjemcu." });
+      const userEmail = userData.user.email;
+      if (!userEmail || userEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail)) {
+        return json(400, { error: "Prihlásený účet nemá platnú e-mailovú adresu." });
       }
       if (!body.data?.measurementId) return json(400, { error: "Chýba identifikátor zamerania." });
       const { data: measurement, error: measurementError } = await userClient
@@ -335,9 +336,6 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (measurementError) return json(500, { error: measurementError.message });
       if (!measurement) return json(403, { error: "Zameranie neexistuje alebo k nemu nemáte prístup." });
-      if (measurement.customer_email?.toLowerCase() !== body.to.toLowerCase()) {
-        return json(403, { error: "Email možno odoslať iba na adresu uvedenú v zázname zamerania." });
-      }
       const { data: workOrder, error: workOrderError } = await userClient
         .from("work_orders")
         .select("title, customer_name")
@@ -345,7 +343,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (workOrderError) return json(500, { error: workOrderError.message });
       if (!workOrder) return json(403, { error: "K zákazke tohto zamerania nemáte prístup." });
-      recipients = [body.to];
+      recipients = [userEmail];
       templateData = {
         customerName: workOrder.customer_name ?? "",
         orderTitle: workOrder.title,

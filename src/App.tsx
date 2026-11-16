@@ -2404,8 +2404,8 @@ export function App() {
     const submitter = event.nativeEvent instanceof SubmitEvent ? event.nativeEvent.submitter : null;
     const action = submitter instanceof HTMLButtonElement && submitter.value === "EMAIL" ? "EMAIL" : "DOWNLOAD";
     const customerEmail = String(form.get("customer_email") ?? "").trim();
-    if (action === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
-      setError("Pred odoslaním zadajte platnú e-mailovú adresu.");
+    if (action === "EMAIL" && !session.user.email) {
+      setError("Prihlásený účet nemá nastavenú e-mailovú adresu.");
       return;
     }
 
@@ -2464,12 +2464,12 @@ export function App() {
         const { error: emailError } = await client.functions.invoke("send-email", {
           body: {
             template: "work_order_measurement",
-            to: customerEmail,
+            to: session.user.email,
             data: { measurementId: measurement.id },
           },
         });
         if (emailError) throw new Error(`Zameranie je uložené, ale email sa nepodarilo odoslať: ${await functionErrorText(emailError)}`);
-        setNotice("Zameranie bolo uložené a odoslané na email.");
+        setNotice(`Zameranie bolo uložené a odoslané na ${session.user.email}.`);
       } else {
         downloadMeasurementReport(order, measurement);
         setNotice("Zameranie bolo uložené a stiahnuté do zariadenia.");
@@ -4756,14 +4756,14 @@ export function App() {
                 </div>
               </fieldset>
               <div className="form-grid">
-                <label className="field"><span>Email zákazníka <small>voliteľný; pri odoslaní povinný</small></span><input type="email" name="customer_email" maxLength={254} defaultValue={order.customer_id ? customers.find((customer) => customer.id === order.customer_id)?.contact_details.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? "" : ""} placeholder="zakaznik@email.sk" /></label>
+                <label className="field"><span>Email zákazníka <small>voliteľný kontakt v zázname</small></span><input type="email" name="customer_email" maxLength={254} defaultValue={order.customer_id ? customers.find((customer) => customer.id === order.customer_id)?.contact_details.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? "" : ""} placeholder="zakaznik@email.sk" /></label>
                 <label className="field"><span>Telefón <small>voliteľný</small></span><input type="tel" name="customer_phone" maxLength={40} defaultValue={order.contact_phone ?? ""} placeholder="+421 900 000 000" /></label>
               </div>
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="form-actions">
                 <button type="button" className="button button-quiet" disabled={busy} onClick={closeMeasurementModal}>Zavrieť</button>
                 <button className="button button-outline" name="measurement_action" value="DOWNLOAD" disabled={busy || order.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Stiahnuť uložený záznam" : "Uložiť a stiahnuť"}</button>
-                <button className="button button-primary button-small" name="measurement_action" value="EMAIL" disabled={busy || order.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Znova odoslať email" : "Uložiť a poslať email"}</button>
+                <button className="button button-primary button-small" name="measurement_action" value="EMAIL" disabled={busy || order.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Znova poslať na môj email" : "Uložiť a poslať na môj email"}</button>
               </div>
             </form>
           </section>
