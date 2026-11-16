@@ -195,7 +195,7 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
             ? "1 ovládač"
             : ["2", "3", "4"].includes(data.controls ?? "")
               ? `${data.controls} ovládače`
-          : data.controls ?? "";
+              : data.controls ?? "";
       const windowRows = (data.windows ?? []).map((window, index) => `
         <tr>
           <td style="padding:8px;border:1px solid #e7e9f2;">${index + 1}. ${escapeHtml(window.room ?? "")}</td>
