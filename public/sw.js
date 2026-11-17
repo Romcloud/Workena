@@ -25,6 +25,39 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+  event.waitUntil((async () => {
+    let data;
+    try {
+      data = event.data.json();
+    } catch (error) {
+      console.error("Neplatná push notifikácia.", error);
+      return;
+    }
+    await self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "/workena-icon-192.png",
+      badge: "/workena-icon-192.png",
+      data: { url: "/" },
+    });
+  })());
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
+    if (existing) {
+      await existing.focus();
+      existing.postMessage({ type: "OPEN_WORK_ORDERS" });
+    } else {
+      await self.clients.openWindow("/?open=work-orders");
+    }
+  })());
+});
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);

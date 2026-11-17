@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.google-sheets-sync]
 verify_jwt = false
+
+[functions.work-order-push]
+verify_jwt = false

@@ -39,6 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { PushNotificationSettings, removeDevicePushSubscription } from "./PushNotificationSettings";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
@@ -521,6 +522,10 @@ export function App() {
   const [reportDataType, setReportDataType] = useState<"ALL" | "ATTENDANCE" | "TRIPS" | "WORK_ORDERS">("ALL");
   const [attendanceNow, setAttendanceNow] = useState(Date.now());
   const [page, setPage] = useState<Page>(() => {
+    if (new URLSearchParams(window.location.search).get("open") === "work-orders") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+      return "workOrders";
+    }
     if (window.location.hash === "#obchodne-podmienky") return "terms";
     if (window.location.hash === "#ochrana-osobnych-udajov") return "privacy";
     const savedPage = window.localStorage.getItem("workena-page");
@@ -817,6 +822,15 @@ export function App() {
     setBillingIcDph(activeMembership?.company.billing_ic_dph ?? "");
     setBillingAddress(activeMembership?.company.billing_address ?? "");
   }, [activeCompanyId, profileName, activeMembership?.company.selected_plan, activeMembership?.company.billing_name, activeMembership?.company.billing_ico, activeMembership?.company.billing_dic, activeMembership?.company.billing_ic_dph, activeMembership?.company.billing_address]);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const handleNotification = (event: MessageEvent) => {
+      if (event.data?.type === "OPEN_WORK_ORDERS") setPage("workOrders");
+    };
+    navigator.serviceWorker.addEventListener("message", handleNotification);
+    return () => navigator.serviceWorker.removeEventListener("message", handleNotification);
+  }, []);
 
   useEffect(() => {
     if (!client) {
@@ -1569,11 +1583,24 @@ export function App() {
   };
 
   const switchAccount = async () => {
+    if (!client) return;
+    try {
+      await removeDevicePushSubscription(client);
+    } catch (reason: unknown) {
+      setError(`Pred prepnutím účtu sa nepodarilo vypnúť notifikácie: ${errorText(reason)}`);
+      return;
+    }
     await signIn(true);
   };
 
   const signOut = async () => {
     if (!client) return;
+    try {
+      await removeDevicePushSubscription(client);
+    } catch (reason: unknown) {
+      setError(`Pred odhlásením sa nepodarilo vypnúť notifikácie: ${errorText(reason)}`);
+      return;
+    }
     const { error: signOutError } = await client.auth.signOut();
     if (signOutError) setError(signOutError.message);
   };
@@ -5241,6 +5268,7 @@ export function App() {
         {notice && <p className="invite-success" role="status">{notice}</p>}
         <div className="form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Ukladám…" : "Uložiť profil"}</button></div>
       </form>
+      {client && session && <PushNotificationSettings client={client} userId={session.user.id} />}
       <section className="panel form-panel account-actions">
         <div><h2>Prihlasovací účet</h2><p>Aktuálne ste prihlásený ako {session?.user.email ?? "—"}.</p></div>
         <div className="form-actions">
