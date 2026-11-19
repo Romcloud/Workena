@@ -193,6 +193,22 @@ export type WorkOrderMeasurementWindow = {
   note: string;
 };
 
+export type MeasurementField = {
+  id: string;
+  label: string;
+  type: "text" | "number" | "select" | "boolean";
+  scope: "measurement" | "window";
+  required: boolean;
+  active: boolean;
+  options?: Array<{ value: string; label: string }>;
+};
+
+export type MeasurementCustomFields = {
+  configured?: boolean;
+  values?: Record<string, string | boolean>;
+  windows?: Array<Record<string, string | boolean>>;
+};
+
 export type WorkOrderMeasurement = {
   id: string;
   company_id: string;
@@ -207,6 +223,7 @@ export type WorkOrderMeasurement = {
   controls: "NONE" | "1" | "2" | "3" | "4" | "5" | "OTHER";
   controls_other: string | null;
   windows: WorkOrderMeasurementWindow[];
+  custom_fields?: MeasurementCustomFields;
   customer_email: string | null;
   customer_phone: string | null;
   created_at: string;

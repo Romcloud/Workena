@@ -32,6 +32,7 @@ import {
   RefreshCw,
   Ruler,
   Search,
+  Settings,
   ShieldCheck,
   Square,
   Trash2,
@@ -43,7 +44,7 @@ import { PushNotificationSettings, removeDevicePushSubscription } from "./PushNo
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigurationError } from "./lib/supabase";
-import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyJoinRequest, CompanyPlan, CompanySearchResult, Customer, CustomerStatus, EntryStatus, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderMeasurement, WorkOrderMeasurementWindow, WorkOrderPhoto, WorkOrderStatus, WorkOrderType } from "./lib/types";
+import type { AbsenceRequest, AbsenceStatus, AbsenceType, AdminCompanyRow, AttendanceBreak, AttendanceShift, Company, CompanyJoinRequest, CompanyPlan, CompanySearchResult, Customer, CustomerStatus, EntryStatus, MeasurementCustomFields, MeasurementField, Membership, PaymentPlan, PaymentRequest, Photo, Role, VehicleTrip, WorkEntry, WorkOrder, WorkOrderAssignment, WorkOrderMeasurement, WorkOrderMeasurementWindow, WorkOrderPhoto, WorkOrderStatus, WorkOrderType } from "./lib/types";
 import { TermsOfService } from "./TermsOfService";
 import { PrivacyPolicy } from "./PrivacyPolicy";
 import { GOOGLE_SHEETS_APPS_SCRIPT } from "./lib/googleSheetsAppsScript";
@@ -128,7 +129,6 @@ const MEASUREMENT_REVEAL_LABELS: Record<WorkOrderMeasurement["reveal_type"], str
   OPEN: "Otvorená",
   OTHER: "Iná",
 };
-const MEASUREMENT_GUIDE_TYPES: WorkOrderMeasurementWindow["guide_type"][] = ["S", "Z", "O", "STF", "STF2"];
 const MEASUREMENT_GUIDE_LABELS: Record<WorkOrderMeasurementWindow["guide_type"], string> = {
   S: "Typ S",
   Z: "Typ Z",
@@ -190,12 +190,34 @@ function measurementControlsLabel(controls: WorkOrderMeasurement["controls"], ot
   return ["2", "3", "4"].includes(controls) ? `${controls} ovládače` : `${controls} ovládačov`;
 }
 
+function measurementFieldValueLabel(field: MeasurementField, value: string | boolean | undefined) {
+  if (value === undefined || value === "") return "—";
+  if (field.type === "boolean") return value ? "Áno" : "Nie";
+  return field.options?.find((option) => option.value === value)?.label ?? String(value);
+}
+
+function measurementLegacyValues(measurement: WorkOrderMeasurement): MeasurementCustomFields {
+  return {
+    configured: true,
+    values: {
+      control_type: measurement.control_type,
+      color: measurement.color,
+      box_type: measurement.box_type,
+      reveal_type: measurement.reveal_type,
+      side_panels: measurement.side_panels,
+      controls: measurement.controls,
+      controls_other: measurement.controls_other ?? "",
+    },
+    windows: measurement.windows.map((window) => ({ guide_type: window.guide_type })),
+  };
+}
+
 function measurementFileName(order: WorkOrder | null, measurement: WorkOrderMeasurement, customer: Customer | null) {
   const name = order?.customer_name || customer?.full_name || order?.title || "Zameranie";
   return `zameranie-${name.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "") || order?.id || customer?.id || measurement.id}`;
 }
 
-async function downloadMeasurementPdf(order: WorkOrder | null, measurement: WorkOrderMeasurement, customer: Customer | null) {
+async function downloadMeasurementPdf(order: WorkOrder | null, measurement: WorkOrderMeasurement, customer: Customer | null, fields: MeasurementField[] = []) {
   const [{ default: pdfMake }, { default: fonts }] = await Promise.all([
     import("pdfmake/build/pdfmake"),
     import("pdfmake/build/vfs_fonts"),
@@ -207,19 +229,29 @@ async function downloadMeasurementPdf(order: WorkOrder | null, measurement: Work
       { text: `${order ? "Zákazka" : "Zákazník"}: ${name}${order?.customer_name ? ` · ${order.title}` : ""}` },
       { text: `Vytvorené ${new Date(measurement.created_at).toLocaleString("sk-SK")}`, margin: [0, 0, 0, 12] },
       { text: "Technické údaje", style: "heading" },
-      ...[
-        `Typ ovládania: ${MEASUREMENT_CONTROL_LABELS[measurement.control_type]}`,
-        `Farba: ${measurement.color}`,
-        `Typ boxu: ${MEASUREMENT_BOX_LABELS[measurement.box_type]}`,
-        `Typ špalety: ${MEASUREMENT_REVEAL_LABELS[measurement.reveal_type]}`,
-        `Bočnice: ${measurement.side_panels ? "Áno" : "Nie"}`,
-        `Počet ovládačov: ${measurementControlsLabel(measurement.controls, measurement.controls_other)}`,
-        `Kontakt: ${[measurement.customer_email, measurement.customer_phone].filter(Boolean).join(" · ") || "—"}`,
-      ].map((text) => ({ text, margin: [0, 0, 0, 4] as [number, number, number, number] })),
+      ...(measurement.custom_fields?.configured
+        ? fields.filter((field) => field.scope === "measurement").map((field) => ({
+          text: `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.values?.[field.id])}`,
+          margin: [0, 0, 0, 4] as [number, number, number, number],
+        }))
+        : [
+          `Typ ovládania: ${MEASUREMENT_CONTROL_LABELS[measurement.control_type]}`,
+          `Farba: ${measurement.color}`,
+          `Typ boxu: ${MEASUREMENT_BOX_LABELS[measurement.box_type]}`,
+          `Typ špalety: ${MEASUREMENT_REVEAL_LABELS[measurement.reveal_type]}`,
+          `Bočnice: ${measurement.side_panels ? "Áno" : "Nie"}`,
+          `Počet ovládačov: ${measurementControlsLabel(measurement.controls, measurement.controls_other)}`,
+        ].map((text) => ({ text, margin: [0, 0, 0, 4] as [number, number, number, number] }))),
+      { text: `Kontakt: ${[measurement.customer_email, measurement.customer_phone].filter(Boolean).join(" · ") || "—"}`, margin: [0, 0, 0, 4] },
       { text: "Okná / miestnosti", style: "heading" },
       ...measurement.windows.flatMap((item, index) => [
         { text: `${index + 1}. ${item.room}`, bold: true, margin: [0, 8, 0, 3] as [number, number, number, number] },
-        { text: `Šírka: ${item.width} mm · Výška: ${item.height} mm · Typ vodiacej lišty: ${MEASUREMENT_GUIDE_LABELS[item.guide_type]}` },
+        { text: `Šírka: ${item.width} mm · Výška: ${item.height} mm` },
+        ...(measurement.custom_fields?.configured
+          ? fields.filter((field) => field.scope === "window").map((field) => ({
+            text: `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.windows?.[index]?.[field.id])}`,
+          }))
+          : [{ text: `Typ vodiacej lišty: ${MEASUREMENT_GUIDE_LABELS[item.guide_type]}` }]),
         { text: `Poznámka: ${item.note || "—"}` },
       ]),
     ],
@@ -232,6 +264,7 @@ function downloadMeasurementReport(
   order: WorkOrder | null,
   measurement: WorkOrderMeasurement,
   customer: Customer | null = null,
+  fields: MeasurementField[] = [],
 ) {
   const reportName = order?.customer_name || customer?.full_name || order?.title || "Zameranie";
   const rows = measurement.windows.map((window, index) => `
@@ -239,7 +272,10 @@ function downloadMeasurementReport(
       <td>${index + 1}. ${escapeHtml(window.room)}</td>
       <td>${escapeHtml(window.width)} mm</td>
       <td>${escapeHtml(window.height)} mm</td>
-      <td>${escapeHtml(MEASUREMENT_GUIDE_LABELS[window.guide_type])}</td>
+      <td>${escapeHtml(measurement.custom_fields?.configured
+        ? fields.filter((field) => field.scope === "window")
+          .map((field) => `${escapeHtml(field.label)}: ${escapeHtml(measurementFieldValueLabel(field, measurement.custom_fields?.windows?.[index]?.[field.id]))}`).join("<br>") || "—"
+        : MEASUREMENT_GUIDE_LABELS[window.guide_type])}</td>
       <td>${escapeHtml(window.note || "—")}</td>
     </tr>`).join("");
   const html = `<!doctype html>
@@ -251,12 +287,14 @@ function downloadMeasurementReport(
 <p><small>Vytvorené ${escapeHtml(new Date(measurement.created_at).toLocaleString("sk-SK"))}</small></p>
 <h2>Technické údaje</h2>
 <dl>
-<dt>Typ ovládania</dt><dd>${escapeHtml(MEASUREMENT_CONTROL_LABELS[measurement.control_type])}</dd>
+${measurement.custom_fields?.configured
+  ? fields.filter((field) => field.scope === "measurement").map((field) => `<dt>${escapeHtml(field.label)}</dt><dd>${escapeHtml(measurementFieldValueLabel(field, measurement.custom_fields?.values?.[field.id]))}</dd>`).join("")
+  : `<dt>Typ ovládania</dt><dd>${escapeHtml(MEASUREMENT_CONTROL_LABELS[measurement.control_type])}</dd>
 <dt>Farba</dt><dd>${escapeHtml(measurement.color)}</dd>
 <dt>Typ boxu</dt><dd>${escapeHtml(MEASUREMENT_BOX_LABELS[measurement.box_type])}</dd>
 <dt>Typ špalety</dt><dd>${escapeHtml(MEASUREMENT_REVEAL_LABELS[measurement.reveal_type])}</dd>
 <dt>Bočnice</dt><dd>${measurement.side_panels ? "Áno" : "Nie"}</dd>
-<dt>Počet ovládačov</dt><dd>${escapeHtml(measurementControlsLabel(measurement.controls, measurement.controls_other))}</dd>
+<dt>Počet ovládačov</dt><dd>${escapeHtml(measurementControlsLabel(measurement.controls, measurement.controls_other))}</dd>`}
 <dt>Kontakt</dt><dd>${escapeHtml([measurement.customer_email, measurement.customer_phone].filter(Boolean).join(" · ") || "—")}</dd>
 </dl>
 <h2>Okná / miestnosti</h2>
@@ -490,7 +528,10 @@ export function App() {
   const [measurementSavedRecordId, setMeasurementSavedRecordId] = useState<string | null>(null);
   const [editingMeasurement, setEditingMeasurement] = useState<WorkOrderMeasurement | null>(null);
   const [measurementWindowIndexes, setMeasurementWindowIndexes] = useState<number[]>([0]);
-  const [measurementControls, setMeasurementControls] = useState<WorkOrderMeasurement["controls"]>("NONE");
+  const [measurementFields, setMeasurementFields] = useState<MeasurementField[]>([]);
+  const [draftMeasurementFields, setDraftMeasurementFields] = useState<MeasurementField[]>([]);
+  const [showMeasurementSettings, setShowMeasurementSettings] = useState(false);
+  const [measurementSettingsBusy, setMeasurementSettingsBusy] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [workOrderPhotos, setWorkOrderPhotos] = useState<WorkOrderPhotoView[]>([]);
   const [pendingWorkOrderPhotos, setPendingWorkOrderPhotos] = useState<WorkOrderPhotoFiles>({});
@@ -669,6 +710,25 @@ export function App() {
     session?.user.email?.split("@")[0] ??
     "Používateľ";
   const client = supabase;
+
+  useEffect(() => {
+    if (!client || !activeCompanyId || !activeMembership?.active) {
+      setMeasurementFields([]);
+      return;
+    }
+    setMeasurementFields([]);
+    let active = true;
+    void client.from("company_measurement_fields").select("fields").eq("company_id", activeCompanyId).maybeSingle()
+      .then(({ data, error: fieldsError }) => {
+        if (!active) return;
+        if (fieldsError) {
+          setError(`Parametre zameraní sa nepodarilo načítať: ${fieldsError.message}`);
+          return;
+        }
+        setMeasurementFields((data?.fields ?? []) as MeasurementField[]);
+      });
+    return () => { active = false; };
+  }, [activeCompanyId, activeMembership?.active, client]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2540,21 +2600,78 @@ export function App() {
         ? workOrderMeasurements.find((record) => record.id === measurementSavedRecordId) ?? null
         : null;
       if (!measurement) {
-        const windows = measurementWindowIndexes.map((index) => ({
+        const legacyValues = editingMeasurement
+          ? editingMeasurement.custom_fields?.configured
+            ? editingMeasurement.custom_fields
+            : measurementLegacyValues(editingMeasurement)
+          : null;
+        const values: Record<string, string | boolean> = { ...(legacyValues?.values ?? {}) };
+        const windowValues = measurementWindowIndexes.map((index) => ({ ...(legacyValues?.windows?.[index] ?? {}) }));
+        for (const field of measurementFields.filter((item) => item.active)) {
+          if (field.scope === "measurement") {
+            const value = String(form.get(`measurement_field_${field.id}`) ?? "").trim();
+            if (field.type === "boolean") {
+              if (value === "true" || value === "false") values[field.id] = value === "true";
+              else delete values[field.id];
+            } else if (field.type === "text" || value) {
+              values[field.id] = value;
+            } else {
+              delete values[field.id];
+            }
+          } else {
+            for (const [row, index] of measurementWindowIndexes.entries()) {
+              const value = String(form.get(`window_field_${field.id}_${index}`) ?? "").trim();
+              if (field.type === "boolean") {
+                if (value === "true" || value === "false") windowValues[row][field.id] = value === "true";
+                else delete windowValues[row][field.id];
+              } else if (field.type === "text" || value) {
+                windowValues[row][field.id] = value;
+              } else {
+                delete windowValues[row][field.id];
+              }
+            }
+          }
+        }
+        const customFields: MeasurementCustomFields = {
+          configured: measurementFields.length > 0 || !editingMeasurement || editingMeasurement.custom_fields?.configured === true,
+          values,
+          windows: windowValues,
+        };
+        const windows = measurementWindowIndexes.map((index, row) => ({
           room: String(form.get(`window_room_${index}`) ?? "").trim(),
           width: String(form.get(`window_width_${index}`) ?? "").trim(),
           height: String(form.get(`window_height_${index}`) ?? "").trim(),
-          guide_type: String(form.get(`window_guide_${index}`) ?? "") as WorkOrderMeasurementWindow["guide_type"],
+          guide_type: (["S", "Z", "O", "STF", "STF2"] as string[]).includes(String(windowValues[row]?.guide_type))
+            ? String(windowValues[row]?.guide_type) as WorkOrderMeasurementWindow["guide_type"]
+            : "S" as const,
           note: String(form.get(`window_note_${index}`) ?? "").trim(),
         }));
+        const value = (id: string, fallback: string) => String(values[id] ?? fallback);
+        const configuredControlType = value("control_type", "MANUAL");
+        const configuredBoxType = value("box_type", "SURFACE");
+        const configuredRevealType = value("reveal_type", "STRAIGHT");
+        const configuredControls = value("controls", "NONE");
+        const controlType = (["MANUAL", "IO", "WT", "SOLAR", "TAHOMA"] as string[]).includes(configuredControlType)
+          ? configuredControlType
+          : "MANUAL";
+        const boxType = (["SURFACE", "RECESSED"] as string[]).includes(configuredBoxType) ? configuredBoxType : "SURFACE";
+        const revealType = (["STRAIGHT", "OPEN", "OTHER"] as string[]).includes(configuredRevealType)
+          ? configuredRevealType
+          : "STRAIGHT";
+        const controls = (["NONE", "1", "2", "3", "4", "5", "OTHER"] as string[]).includes(configuredControls)
+          ? configuredControls
+          : "NONE";
+        const legacyColor = value("color", "Neutrálne").trim().slice(0, 120) || "Neutrálne";
+        const legacyControlsOther = String(values.controls_other || "Iné").trim().slice(0, 120) || "Iné";
+        const sidePanels = values.side_panels === true;
         const measurementArgs = {
-          p_control_type: String(form.get("control_type") ?? ""),
-          p_color: String(form.get("color") ?? ""),
-          p_box_type: String(form.get("box_type") ?? ""),
-          p_reveal_type: String(form.get("reveal_type") ?? ""),
-          p_side_panels: String(form.get("side_panels") ?? "") === "YES",
-          p_controls: String(form.get("controls") ?? ""),
-          p_controls_other: String(form.get("controls_other") ?? ""),
+          p_control_type: controlType,
+          p_color: legacyColor,
+          p_box_type: boxType,
+          p_reveal_type: revealType,
+          p_side_panels: sidePanels,
+          p_controls: controls,
+          p_controls_other: controls === "OTHER" ? legacyControlsOther : "",
           p_windows: windows,
           p_customer_email: customerEmail || null,
           p_customer_phone: String(form.get("customer_phone") ?? "").trim() || null,
@@ -2576,20 +2693,26 @@ export function App() {
         if (createError) throw createError;
         const measurementId = editingMeasurement?.id ?? result;
         if (typeof measurementId !== "string") throw new Error("Databáza nepotvrdila uloženie zamerania.");
+        const { error: customFieldsError } = await client.rpc("save_measurement_custom_fields", {
+          p_measurement_id: measurementId,
+          p_custom_fields: customFields,
+        });
+        if (customFieldsError) throw new Error(`Základné údaje zamerania sú uložené, ale vlastné parametre sa nepodarilo uložiť: ${customFieldsError.message}`);
         measurement = {
           id: measurementId,
           company_id: activeCompanyId,
           work_order_id: order?.id ?? null,
           customer_id: order ? null : customer?.id ?? null,
           created_by: editingMeasurement?.created_by ?? session.user.id,
-          control_type: String(form.get("control_type") ?? "") as WorkOrderMeasurement["control_type"],
-          color: String(form.get("color") ?? "").trim(),
-          box_type: String(form.get("box_type") ?? "") as WorkOrderMeasurement["box_type"],
-          reveal_type: String(form.get("reveal_type") ?? "") as WorkOrderMeasurement["reveal_type"],
-          side_panels: String(form.get("side_panels") ?? "") === "YES",
-          controls: String(form.get("controls") ?? "") as WorkOrderMeasurement["controls"],
-          controls_other: String(form.get("controls_other") ?? "").trim() || null,
+          control_type: controlType as WorkOrderMeasurement["control_type"],
+          color: legacyColor,
+          box_type: boxType as WorkOrderMeasurement["box_type"],
+          reveal_type: revealType as WorkOrderMeasurement["reveal_type"],
+          side_panels: sidePanels,
+          controls: controls as WorkOrderMeasurement["controls"],
+          controls_other: controls === "OTHER" ? value("controls_other", "Iné") : null,
           windows,
+          custom_fields: customFields,
           customer_email: customerEmail || null,
           customer_phone: String(form.get("customer_phone") ?? "").trim() || null,
           created_at: editingMeasurement?.created_at ?? new Date().toISOString(),
@@ -2615,13 +2738,12 @@ export function App() {
         if (emailError) throw new Error(`Zameranie je uložené, ale email sa nepodarilo odoslať: ${await functionErrorText(emailError)}`);
         setNotice(`Zameranie bolo uložené a odoslané na ${session.user.email}.`);
       } else {
-        downloadMeasurementReport(order, measurement, customer);
+        downloadMeasurementReport(order, measurement, customer, measurementFields);
         setNotice("Zameranie bolo uložené a stiahnuté do zariadenia.");
       }
       setSelectedMeasurementOrderId(null);
       setSelectedMeasurementCustomerId(null);
       setMeasurementSavedRecordId(null);
-      setEditingMeasurement(null);
       setEditingMeasurement(null);
     } catch (reason: unknown) {
       setError(errorText(reason));
@@ -2647,13 +2769,51 @@ export function App() {
       setSelectedMeasurementCustomerId(measurementPickerTargetId);
     }
     setMeasurementWindowIndexes([0]);
-    setMeasurementControls("NONE");
     setMeasurementSavedRecordId(null);
     setEditingMeasurement(null);
     setError("");
     setWorkOrderPopupId(null);
     setExpandedWorkOrderId(null);
     setShowMeasurementPicker(false);
+  };
+
+  const saveMeasurementFieldSettings = async () => {
+    if (!client || !activeCompanyId || !isCompanyOwner) return;
+    const activeIds = draftMeasurementFields.map((field) => field.id);
+    if (new Set(activeIds).size !== activeIds.length
+      || draftMeasurementFields.some((field) => !field.label.trim()
+        || (field.type === "select" && !field.options?.length))) {
+      setError("Každé pole musí mať názov; polia typu výber potrebujú aspoň jednu možnosť.");
+      return;
+    }
+    setMeasurementSettingsBusy(true);
+    setError("");
+    try {
+      const { error: saveError } = await client.from("company_measurement_fields").upsert({
+        company_id: activeCompanyId,
+        fields: draftMeasurementFields.map((field) => ({ ...field, label: field.label.trim() })),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "company_id" });
+      if (saveError) throw saveError;
+      setMeasurementFields(draftMeasurementFields);
+      setShowMeasurementSettings(false);
+      setNotice("Parametre zameraní boli uložené pre túto firmu.");
+    } catch (reason: unknown) {
+      setError(`Parametre zameraní sa nepodarilo uložiť: ${errorText(reason)}`);
+    } finally {
+      setMeasurementSettingsBusy(false);
+    }
+  };
+
+  const addMeasurementField = () => {
+    setDraftMeasurementFields((current) => [...current, {
+      id: crypto.randomUUID(),
+      label: "",
+      type: "text",
+      scope: "measurement",
+      required: false,
+      active: true,
+    }]);
   };
 
   const completeWorkOrder = async (order: WorkOrder) => {
@@ -4636,7 +4796,6 @@ export function App() {
               setEditingMeasurement(null);
               setMeasurementSavedRecordId(null);
               setMeasurementWindowIndexes([0]);
-              setMeasurementControls("NONE");
               setError("");
             }}>{customer.full_name}</button>)}
           </div>}
@@ -4859,7 +5018,6 @@ export function App() {
                     setMeasurementSavedRecordId(null);
                     setEditingMeasurement(null);
                     setMeasurementWindowIndexes([0]);
-                    setMeasurementControls("NONE");
                     setSelectedMeasurementOrderId(workOrder.id);
                     setSelectedMeasurementCustomerId(null);
                     setWorkOrderPopupId(null);
@@ -4953,6 +5111,11 @@ export function App() {
           ? customers.find((customer) => customer.id === order.customer_id) ?? null
           : null);
         if (selectedMeasurementOrderId && !order) return null;
+        const editingCustomFields = editingMeasurement
+          ? editingMeasurement.custom_fields?.configured
+            ? editingMeasurement.custom_fields
+            : measurementLegacyValues(editingMeasurement)
+          : null;
         const closeMeasurementModal = () => {
           setSelectedMeasurementOrderId(null);
           setSelectedMeasurementCustomerId(null);
@@ -4966,6 +5129,45 @@ export function App() {
               <div><span className="eyebrow">{order ? "ZÁKAZKA · ZAMERANIA" : "ZÁKAZNÍK · ZAMERANIA"}</span><h2 id="measurement-title">{measurementCustomer?.full_name || order?.customer_name || order?.title || "Zameranie"}</h2><p>{order ? (measurementCustomer?.full_name ? order.title : order.address) : "Samostatné zameranie zákazníka"}</p></div>
               <button type="button" className="logout-button" aria-label="Zavrieť zamerania" disabled={busy} onClick={closeMeasurementModal}><X size={18} /></button>
             </div>
+            {isCompanyOwner && <div className="measurement-settings-toggle">
+              <button type="button" className="button button-outline button-small" disabled={measurementLoading || measurementSettingsBusy} onClick={() => {
+                setDraftMeasurementFields(measurementFields.map((field) => ({ ...field, options: field.options?.map((option) => ({ ...option })) })));
+                setShowMeasurementSettings((current) => !current);
+                setError("");
+              }}><Settings size={14} /> {showMeasurementSettings ? "Skryť nastavenia" : "Nastavenia parametrov"}</button>
+            </div>}
+            {showMeasurementSettings && isCompanyOwner && <section className="measurement-settings panel">
+              <div className="section-title-row"><div><h3>Parametre zamerania</h3><p>Vlastné polia tejto firmy; vypnuté polia zostanú v starších záznamoch.</p></div></div>
+              {draftMeasurementFields.map((field, index) => {
+                const updateField = (patch: Partial<MeasurementField>) => setDraftMeasurementFields((current) => current.map((item, row) => row === index ? { ...item, ...patch } : item));
+                const optionsValue = (field.options ?? []).map((option) => option.value === option.label ? option.value : `${option.value}=${option.label}`).join(", ");
+                return <div className="measurement-setting-row" key={field.id}>
+                  <label className="field"><span>Názov poľa</span><input value={field.label} maxLength={80} onChange={(event) => updateField({ label: event.target.value })} /></label>
+                  <label className="field"><span>Typ poľa</span><select value={field.type} onChange={(event) => updateField({ type: event.target.value as MeasurementField["type"] })}>
+                    <option value="text">Text</option><option value="number">Číslo</option><option value="select">Výber</option><option value="boolean">Áno / nie</option>
+                  </select></label>
+                  <label className="field"><span>Umiestnenie</span><select value={field.scope} onChange={(event) => updateField({ scope: event.target.value as MeasurementField["scope"] })}>
+                    <option value="measurement">Celé zameranie</option><option value="window">Okno / miestnosť</option>
+                  </select></label>
+                  <label className="permission-toggle"><input type="checkbox" checked={field.required} onChange={(event) => updateField({ required: event.target.checked })} /> Povinné</label>
+                  <label className="permission-toggle"><input type="checkbox" checked={field.active} onChange={(event) => updateField({ active: event.target.checked })} /> Zobrazovať</label>
+                  {field.type === "select" && <label className="field measurement-setting-options"><span>Možnosti <small>oddeľte čiarkou; kód=popis je voliteľný</small></span><input value={optionsValue} onChange={(event) => updateField({
+                    options: event.target.value.split(",").map((part) => part.trim()).filter(Boolean).map((part) => {
+                      const separator = part.indexOf("=");
+                      return separator > 0
+                        ? { value: part.slice(0, separator).trim(), label: part.slice(separator + 1).trim() }
+                        : { value: part, label: part };
+                    }),
+                  })} /></label>}
+                </div>;
+              })}
+              <div className="form-actions">
+                <button type="button" className="button button-outline button-small" disabled={measurementSettingsBusy || draftMeasurementFields.length >= 30} onClick={addMeasurementField}><Plus size={14} /> Pridať parameter</button>
+                <button type="button" className="button button-quiet" disabled={measurementSettingsBusy} onClick={() => setShowMeasurementSettings(false)}>Zrušiť</button>
+                <button type="button" className="button button-primary button-small" disabled={measurementSettingsBusy} onClick={() => void saveMeasurementFieldSettings()}>{measurementSettingsBusy ? "Ukladám…" : "Uložiť parametre"}</button>
+              </div>
+              {error && <p className="form-error" role="alert">{error}</p>}
+            </section>}
             <section className="measurement-records">
               <div className="section-title-row"><div><h3>Uložené zamerania</h3><p>{order ? "Záznamy zostávajú uložené pri tejto zákazke." : "Záznamy zostávajú uložené pri tomto zákazníkovi."}</p></div><span className="count-pill">{workOrderMeasurements.length}</span></div>
               {measurementLoading
@@ -4973,19 +5175,24 @@ export function App() {
                 : workOrderMeasurements.length === 0
                   ? <p className="muted">{order ? "K tejto zákazke ešte nie je uložené žiadne zameranie." : "K tomuto zákazníkovi ešte nie je uložené žiadne zameranie."}</p>
                   : <div className="measurement-record-list">{workOrderMeasurements.map((measurement) => <article className="measurement-record" key={measurement.id}>
-                    <div className="measurement-record-heading"><strong>{MEASUREMENT_CONTROL_LABELS[measurement.control_type]} · {measurement.color}</strong><small>{dateLabel(measurement.created_at)}</small></div>
-                    <p>Typ boxu: {MEASUREMENT_BOX_LABELS[measurement.box_type]} · Typ špalety: {MEASUREMENT_REVEAL_LABELS[measurement.reveal_type]} · Bočnice: {measurement.side_panels ? "Áno" : "Nie"} · Počet ovládačov: {measurementControlsLabel(measurement.controls, measurement.controls_other)}</p>
-                    <ul>{measurement.windows.map((window, index) => <li key={`${measurement.id}-${index}`}><strong>{window.room}</strong> · {window.width} × {window.height} mm · Vodiaca lišta {MEASUREMENT_GUIDE_LABELS[window.guide_type]}{window.note ? ` · Poznámka: ${window.note}` : ""}</li>)}</ul>
+                    <div className="measurement-record-heading"><strong>{measurement.custom_fields?.configured
+                      ? measurementFields.filter((field) => field.scope === "measurement" && measurement.custom_fields?.values?.[field.id] !== undefined)
+                        .map((field) => `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.values?.[field.id])}`).join(" · ") || "Záznam zo zamerania"
+                      : `${MEASUREMENT_CONTROL_LABELS[measurement.control_type]} · ${measurement.color}`}</strong><small>{dateLabel(measurement.created_at)}</small></div>
+                    {!measurement.custom_fields?.configured && <p>Typ boxu: {MEASUREMENT_BOX_LABELS[measurement.box_type]} · Typ špalety: {MEASUREMENT_REVEAL_LABELS[measurement.reveal_type]} · Bočnice: {measurement.side_panels ? "Áno" : "Nie"} · Počet ovládačov: {measurementControlsLabel(measurement.controls, measurement.controls_other)}</p>}
+                    <ul>{measurement.windows.map((window, index) => <li key={`${measurement.id}-${index}`}><strong>{window.room}</strong> · {window.width} × {window.height} mm · {measurement.custom_fields?.configured
+                      ? measurementFields.filter((field) => field.scope === "window" && measurement.custom_fields?.windows?.[index]?.[field.id] !== undefined)
+                        .map((field) => `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.windows?.[index]?.[field.id])}`).join(" · ") || "—"
+                      : `Vodiaca lišta ${MEASUREMENT_GUIDE_LABELS[window.guide_type]}`}{window.note ? ` · Poznámka: ${window.note}` : ""}</li>)}</ul>
                     <div className="work-order-actions">
                       {order?.status !== "DONE" && <button type="button" className="button button-outline button-small" disabled={busy} onClick={() => {
                         setEditingMeasurement(measurement);
                         setMeasurementSavedRecordId(null);
                         setMeasurementWindowIndexes(measurement.windows.map((_, index) => index));
-                        setMeasurementControls(measurement.controls);
                         setError("");
                       }}><Pencil size={14} /> Upraviť</button>}
-                      <button type="button" className="button button-outline button-small" onClick={() => downloadMeasurementReport(order, measurement, measurementCustomer)}><Download size={14} /> HTML</button>
-                      <button type="button" className="button button-outline button-small" onClick={() => void downloadMeasurementPdf(order, measurement, measurementCustomer).catch((reason: unknown) => setError(`PDF sa nepodarilo vytvoriť: ${errorText(reason)}`))}><Download size={14} /> PDF</button>
+                      <button type="button" className="button button-outline button-small" onClick={() => downloadMeasurementReport(order, measurement, measurementCustomer, measurementFields)}><Download size={14} /> HTML</button>
+                      <button type="button" className="button button-outline button-small" onClick={() => void downloadMeasurementPdf(order, measurement, measurementCustomer, measurementFields).catch((reason: unknown) => setError(`PDF sa nepodarilo vytvoriť: ${errorText(reason)}`))}><Download size={14} /> PDF</button>
                     </div>
                   </article>)}</div>}
             </section>
@@ -4993,13 +5200,19 @@ export function App() {
               <div className="section-title-row"><div><h3>{measurementSavedRecordId ? "Záznam je uložený" : editingMeasurement ? "Upraviť zameranie" : "Nové zameranie"}</h3><p>{measurementSavedRecordId ? "Údaje sú uložené. Môžete zopakovať odoslanie alebo stiahnuť súbor." : order?.status === "DONE" ? "Záznamy dokončenej zákazky možno stiahnuť, ale nie upravovať." : "Vyplňte technické údaje a rozmery jednotlivých okien."}</p></div></div>
               <fieldset className="measurement-fieldset" disabled={busy || measurementLoading || Boolean(measurementSavedRecordId)}>
                 <div className="form-grid">
-                  <label className="field"><span>Typ ovládania</span><select name="control_type" defaultValue={editingMeasurement?.control_type ?? "MANUAL"}>{MEASUREMENT_CONTROL_TYPES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
-                  <label className="field"><span>Farba</span><input name="color" maxLength={120} defaultValue={editingMeasurement?.color ?? ""} placeholder="Zadajte farbu" required /></label>
-                  <label className="field"><span>Typ boxu</span><select name="box_type" defaultValue={editingMeasurement?.box_type ?? "SURFACE"}><option value="SURFACE">Priznaný</option><option value="RECESSED">Podomietkový</option></select></label>
-                  <label className="field"><span>Typ špalety</span><select name="reveal_type" defaultValue={editingMeasurement?.reveal_type ?? "STRAIGHT"}><option value="STRAIGHT">Rovná</option><option value="OPEN">Otvorená</option><option value="OTHER">Iná</option></select></label>
-                  <label className="field"><span>Bočnice</span><select name="side_panels" defaultValue={editingMeasurement?.side_panels ? "YES" : "NO"}><option value="YES">Áno</option><option value="NO">Nie</option></select></label>
-                  <label className="field"><span>Ovládače</span><select name="controls" value={measurementControls} onChange={(event) => setMeasurementControls(event.target.value as WorkOrderMeasurement["controls"])}><option value="NONE">Nie</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="OTHER">Iné</option></select></label>
-                  {measurementControls === "OTHER" && <label className="field"><span>Počet / popis ovládačov</span><input name="controls_other" maxLength={120} defaultValue={editingMeasurement?.controls_other ?? ""} placeholder="Doplňte údaj" required /></label>}
+                  {measurementFields.filter((field) => field.active && field.scope === "measurement").map((field) => {
+                    const value = editingCustomFields?.values?.[field.id];
+                    return <label className="field" key={field.id}><span>{field.label}{field.required && " *"}</span>
+                      {field.type === "select" || field.type === "boolean"
+                        ? <select name={`measurement_field_${field.id}`} defaultValue={String(value ?? "")} required={field.required}>
+                          <option value="">Vyberte</option>
+                          {field.type === "boolean"
+                            ? <><option value="true">Áno</option><option value="false">Nie</option></>
+                            : (field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                        : <input name={`measurement_field_${field.id}`} type={field.type} maxLength={field.type === "text" ? 1000 : undefined} defaultValue={String(value ?? "")} required={field.required} />}
+                    </label>;
+                  })}
                 </div>
                 <div className="measurement-windows">
                   <div className="section-title-row"><div><h3>Okná / miestnosti</h3><p>Najviac 50 položiek v jednom zázname.</p></div></div>
@@ -5009,7 +5222,20 @@ export function App() {
                       <label className="field"><span>Okno / miestnosť</span><input name={`window_room_${index}`} maxLength={160} defaultValue={editingMeasurement?.windows[index]?.room ?? ""} placeholder="napr. Obývačka – ľavé okno" required /></label>
                       <label className="field"><span>Šírka (mm)</span><input type="number" name={`window_width_${index}`} min="1" max="99999" step="1" defaultValue={editingMeasurement?.windows[index]?.width ?? ""} required /></label>
                       <label className="field"><span>Výška (mm)</span><input type="number" name={`window_height_${index}`} min="1" max="99999" step="1" defaultValue={editingMeasurement?.windows[index]?.height ?? ""} required /></label>
-                      <label className="field"><span>Typ vodiacej lišty</span><select name={`window_guide_${index}`} defaultValue={editingMeasurement?.windows[index]?.guide_type ?? "S"}>{MEASUREMENT_GUIDE_TYPES.map((type) => <option key={type} value={type}>{MEASUREMENT_GUIDE_LABELS[type]}</option>)}</select></label>
+                      {measurementFields.filter((field) => field.active && field.scope === "window").map((field) => {
+                        const value = editingCustomFields?.windows?.[index]?.[field.id]
+                          ?? (field.id === "guide_type" ? editingMeasurement?.windows[index]?.guide_type : undefined);
+                        return <label className="field" key={field.id}><span>{field.label}{field.required && " *"}</span>
+                          {field.type === "select" || field.type === "boolean"
+                            ? <select name={`window_field_${field.id}_${index}`} defaultValue={String(value ?? "")} required={field.required}>
+                              <option value="">Vyberte</option>
+                              {field.type === "boolean"
+                                ? <><option value="true">Áno</option><option value="false">Nie</option></>
+                                : (field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                            : <input name={`window_field_${field.id}_${index}`} type={field.type} maxLength={field.type === "text" ? 1000 : undefined} defaultValue={String(value ?? "")} required={field.required} />}
+                        </label>;
+                      })}
                       <label className="field measurement-window-note"><span>Poznámka <small>voliteľná</small></span><input name={`window_note_${index}`} maxLength={1000} defaultValue={editingMeasurement?.windows[index]?.note ?? ""} /></label>
                     </div>
                     <button type="button" className="button button-outline button-small" disabled={measurementWindowIndexes.length >= 50} onClick={() => setMeasurementWindowIndexes((current) => [...current, Math.max((editingMeasurement?.windows.length ?? 0) - 1, ...current) + 1])}><Plus size={14} /> Pridať ďalšie okno</button>
@@ -5026,7 +5252,6 @@ export function App() {
                 {editingMeasurement && !measurementSavedRecordId && <button type="button" className="button button-quiet" disabled={busy} onClick={() => {
                   setEditingMeasurement(null);
                   setMeasurementWindowIndexes([0]);
-                  setMeasurementControls("NONE");
                 }}>Zrušiť úpravu</button>}
                 <button className="button button-outline" name="measurement_action" value="DOWNLOAD" disabled={busy || measurementLoading || order?.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Stiahnuť uložený záznam" : "Uložiť a stiahnuť HTML"}</button>
                 <button className="button button-primary button-small" name="measurement_action" value="EMAIL" disabled={busy || measurementLoading || order?.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Znova poslať na môj email" : "Uložiť a poslať na môj email"}</button>

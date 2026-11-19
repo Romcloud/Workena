@@ -42,6 +42,16 @@ type TemplateData = {
   controls?: string;
   controlsOther?: string;
   windows?: Array<{ room?: string; width?: string; height?: string; guide_type?: string; note?: string }>;
+  measurementFields?: Array<{
+    id: string;
+    label: string;
+    type: "text" | "number" | "select" | "boolean";
+    scope: "measurement" | "window";
+    active?: boolean;
+    options?: Array<{ value: string; label: string }>;
+  }>;
+  customFieldValues?: Record<string, string | boolean>;
+  customWindowValues?: Array<Record<string, string | boolean>>;
   customerEmail?: string;
   customerPhone?: string;
   createdAt?: string;
@@ -201,21 +211,29 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
           <td style="padding:8px;border:1px solid #e7e9f2;">${index + 1}. ${escapeHtml(window.room ?? "")}</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.width ?? "")} mm</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.height ?? "")} mm</td>
-          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(guideLabels[window.guide_type ?? ""] ?? window.guide_type ?? "")}</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${data.customFieldValues
+            ? (data.measurementFields ?? []).filter((field) => field.scope === "window" && field.active !== false)
+              .map((field) => `${escapeHtml(field.label)}: ${escapeHtml(measurementValueLabel(field, data.customWindowValues?.[index]?.[field.id]))}`).join("<br/>") || "—"
+            : escapeHtml(guideLabels[window.guide_type ?? ""] ?? window.guide_type ?? "")}</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.note ?? "—")}</td>
         </tr>`).join("");
+      const technicalDetails = data.customFieldValues
+        ? (data.measurementFields ?? []).filter((field) => field.scope === "measurement" && field.active !== false)
+          .map((field) => `<strong>${escapeHtml(field.label)}:</strong> ${escapeHtml(measurementValueLabel(field, data.customFieldValues?.[field.id]))}`)
+          .join("<br/>")
+        : `<strong>Typ ovládania:</strong> ${escapeHtml(controlLabels[data.controlType ?? ""] ?? data.controlType ?? "")}<br/>
+          <strong>Farba:</strong> ${escapeHtml(data.color ?? "")}<br/>
+          <strong>Typ boxu:</strong> ${escapeHtml(boxLabels[data.boxType ?? ""] ?? data.boxType ?? "")}<br/>
+          <strong>Typ špalety:</strong> ${escapeHtml(revealLabels[data.revealType ?? ""] ?? data.revealType ?? "")}<br/>
+          <strong>Bočnice:</strong> ${data.sidePanels ? "Áno" : "Nie"}<br/>
+          <strong>Počet ovládačov:</strong> ${escapeHtml(controlCount)}`;
       const emailSubjectName = (data.customerName || data.orderTitle || "zákazka").replace(/[\r\n]+/g, " ").slice(0, 180);
       return {
         subject: `Zameranie – ${emailSubjectName}`,
         html: layout("Záznam zo zamerania", `
           <p>Dobrý deň,</p>
           <p><strong>Zákazník:</strong> ${customerName || "—"}<br/><strong>Zákazka:</strong> ${orderTitle}</p>
-          <p><strong>Typ ovládania:</strong> ${escapeHtml(controlLabels[data.controlType ?? ""] ?? data.controlType ?? "")}<br/>
-          <strong>Farba:</strong> ${escapeHtml(data.color ?? "")}<br/>
-          <strong>Typ boxu:</strong> ${escapeHtml(boxLabels[data.boxType ?? ""] ?? data.boxType ?? "")}<br/>
-          <strong>Typ špalety:</strong> ${escapeHtml(revealLabels[data.revealType ?? ""] ?? data.revealType ?? "")}<br/>
-          <strong>Bočnice:</strong> ${data.sidePanels ? "Áno" : "Nie"}<br/>
-          <strong>Počet ovládačov:</strong> ${escapeHtml(controlCount)}<br/>
+          <p>${technicalDetails}<br/>
           <strong>Kontakt:</strong> ${escapeHtml([data.customerEmail, data.customerPhone].filter(Boolean).join(" · ") || "—")}</p>
           <h2 style="font-size:16px;">Okná / miestnosti</h2>
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
@@ -229,6 +247,15 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
     default:
       throw new Error("Neznáma šablóna emailu.");
   }
+}
+
+function measurementValueLabel(
+  field: NonNullable<TemplateData["measurementFields"]>[number],
+  value: string | boolean | undefined,
+) {
+  if (value === undefined || value === "") return "—";
+  if (field.type === "boolean") return value ? "Áno" : "Nie";
+  return field.options?.find((option) => option.value === value)?.label ?? String(value);
 }
 
 Deno.serve(async (req) => {
@@ -368,6 +395,12 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (measurementError) return json(500, { error: measurementError.message });
       if (!measurement) return json(403, { error: "Zameranie neexistuje alebo k nemu nemáte prístup." });
+      const { data: measurementConfig, error: measurementConfigError } = await userClient
+        .from("company_measurement_fields")
+        .select("fields")
+        .eq("company_id", measurement.company_id)
+        .maybeSingle();
+      if (measurementConfigError) return json(500, { error: measurementConfigError.message });
       let customerName = "";
       let orderTitle = "Samostatné zameranie";
       if (measurement.work_order_id) {
@@ -405,6 +438,11 @@ Deno.serve(async (req) => {
         controls: measurement.controls,
         controlsOther: measurement.controls_other ?? "",
         windows: Array.isArray(measurement.windows) ? measurement.windows : [],
+        ...(measurement.custom_fields?.configured ? {
+          measurementFields: Array.isArray(measurementConfig?.fields) ? measurementConfig.fields : [],
+          customFieldValues: measurement.custom_fields.values ?? {},
+          customWindowValues: measurement.custom_fields.windows ?? [],
+        } : {}),
         customerEmail: measurement.customer_email ?? "",
         customerPhone: measurement.customer_phone ?? "",
         createdAt: new Date(measurement.created_at).toLocaleString("sk-SK"),
