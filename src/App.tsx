@@ -2797,8 +2797,11 @@ export function App() {
     const activeIds = draftMeasurementFields.map((field) => field.id);
     if (new Set(activeIds).size !== activeIds.length
       || draftMeasurementFields.some((field) => !field.label.trim()
-        || (field.type === "select" && !field.options?.length))) {
-      setError("Každé pole musí mať názov; polia typu výber potrebujú aspoň jednu možnosť.");
+        || (field.type === "select" && (!field.options?.length
+          || field.options.length > 50
+          || field.options.some((option) => !option.label.trim() || option.label.length > 100 || option.value.length > 100)
+          || new Set(field.options.map((option) => option.value.trim() || option.label.trim())).size !== field.options.length)))) {
+      setError("Každé pole musí mať názov a výberové polia musia mať 1 až 50 neprázdnych, jedinečných možností.");
       return;
     }
     setMeasurementSettingsBusy(true);
@@ -2806,11 +2809,29 @@ export function App() {
     try {
       const { error: saveError } = await client.from("company_measurement_fields").upsert({
         company_id: activeCompanyId,
-        fields: draftMeasurementFields.map((field) => ({ ...field, label: field.label.trim() })),
+        fields: draftMeasurementFields.map((field) => ({
+          ...field,
+          label: field.label.trim(),
+          options: field.type === "select"
+            ? field.options?.map((option) => {
+              const label = option.label.trim();
+              return { value: option.value.trim() || label, label };
+            })
+            : field.options,
+        })),
         updated_at: new Date().toISOString(),
       }, { onConflict: "company_id" });
       if (saveError) throw saveError;
-      setMeasurementFields(draftMeasurementFields);
+      setMeasurementFields(draftMeasurementFields.map((field) => ({
+        ...field,
+        label: field.label.trim(),
+        options: field.type === "select"
+          ? field.options?.map((option) => {
+            const label = option.label.trim();
+            return { value: option.value.trim() || label, label };
+          })
+          : field.options,
+      })));
       setShowMeasurementSettings(false);
       setNotice("Parametre zameraní boli uložené pre túto firmu.");
     } catch (reason: unknown) {
@@ -5155,10 +5176,12 @@ export function App() {
               <div className="section-title-row"><div><h3>Parametre zamerania</h3><p>Vlastné polia tejto firmy; vypnuté polia zostanú v starších záznamoch.</p></div></div>
               {draftMeasurementFields.map((field, index) => {
                 const updateField = (patch: Partial<MeasurementField>) => setDraftMeasurementFields((current) => current.map((item, row) => row === index ? { ...item, ...patch } : item));
-                const optionsValue = (field.options ?? []).map((option) => option.value === option.label ? option.value : `${option.value}=${option.label}`).join(", ");
                 return <div className="measurement-setting-row" key={field.id}>
                   <label className="field"><span>Názov poľa</span><input value={field.label} maxLength={80} onChange={(event) => updateField({ label: event.target.value })} /></label>
-                  <label className="field"><span>Typ poľa</span><select value={field.type} onChange={(event) => updateField({ type: event.target.value as MeasurementField["type"] })}>
+                  <label className="field"><span>Typ poľa</span><select value={field.type} onChange={(event) => updateField({
+                    type: event.target.value as MeasurementField["type"],
+                    ...(event.target.value === "select" && !field.options?.length ? { options: [{ value: "", label: "" }] } : {}),
+                  })}>
                     <option value="text">Text</option><option value="number">Číslo</option><option value="select">Výber</option><option value="boolean">Áno / nie</option>
                   </select></label>
                   <label className="field"><span>Umiestnenie</span><select value={field.scope} onChange={(event) => updateField({ scope: event.target.value as MeasurementField["scope"] })}>
@@ -5166,14 +5189,23 @@ export function App() {
                   </select></label>
                   <label className="permission-toggle"><input type="checkbox" checked={field.required} onChange={(event) => updateField({ required: event.target.checked })} /> Povinné</label>
                   <label className="permission-toggle"><input type="checkbox" checked={field.active} onChange={(event) => updateField({ active: event.target.checked })} /> Zobrazovať</label>
-                  {field.type === "select" && <label className="field measurement-setting-options"><span>Možnosti <small>oddeľte čiarkou; kód=popis je voliteľný</small></span><input value={optionsValue} onChange={(event) => updateField({
-                    options: event.target.value.split(",").map((part) => part.trim()).filter(Boolean).map((part) => {
-                      const separator = part.indexOf("=");
-                      return separator > 0
-                        ? { value: part.slice(0, separator).trim(), label: part.slice(separator + 1).trim() }
-                        : { value: part, label: part };
-                    }),
-                  })} /></label>}
+                  {field.type === "select" && <div className="measurement-setting-options">
+                    <span className="measurement-setting-options-title">Možnosti výberu</span>
+                    {(field.options ?? []).map((option, optionIndex) => <div className="measurement-setting-option" key={`${field.id}-${optionIndex}`}>
+                      <label className="field"><span>Možnosť {optionIndex + 1}</span><input value={option.label} maxLength={100} onChange={(event) => {
+                        const label = event.target.value;
+                        updateField({ options: (field.options ?? []).map((item, row) => row === optionIndex
+                          ? { ...item, value: !item.value || item.value === item.label ? label : item.value, label }
+                          : item) });
+                      }} /></label>
+                      <button type="button" className="button button-quiet button-small" aria-label={`Odstrániť možnosť ${optionIndex + 1}`} disabled={(field.options?.length ?? 0) <= 1} onClick={() => updateField({
+                        options: (field.options ?? []).filter((_, row) => row !== optionIndex),
+                      })}>Odstrániť</button>
+                    </div>)}
+                    <button type="button" className="button button-outline button-small measurement-setting-add-option" disabled={(field.options?.length ?? 0) >= 50} onClick={() => updateField({
+                      options: [...(field.options ?? []), { value: "", label: "" }],
+                    })}><Plus size={14} /> Pridať ďalšiu možnosť</button>
+                  </div>}
                 </div>;
               })}
               <div className="form-actions">
