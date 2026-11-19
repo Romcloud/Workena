@@ -41,7 +41,7 @@ type TemplateData = {
   sidePanels?: boolean;
   controls?: string;
   controlsOther?: string;
-  windows?: Array<{ room?: string; width?: string; height?: string; guide_type?: string; note?: string }>;
+  windows?: Array<{ room?: string; width?: string; height?: string; size_mode?: string; area?: string; guide_type?: string; note?: string }>;
   measurementFields?: Array<{
     id: string;
     label: string;
@@ -209,8 +209,9 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
       const windowRows = (data.windows ?? []).map((window, index) => `
         <tr>
           <td style="padding:8px;border:1px solid #e7e9f2;">${index + 1}. ${escapeHtml(window.room ?? "")}</td>
-          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.width ?? "")} mm</td>
-          <td style="padding:8px;border:1px solid #e7e9f2;">${escapeHtml(window.height ?? "")} mm</td>
+          <td style="padding:8px;border:1px solid #e7e9f2;">${window.size_mode === "area" && window.area
+            ? `${escapeHtml(window.area)} m²`
+            : `${escapeHtml(window.width ?? "")} × ${escapeHtml(window.height ?? "")} mm`}</td>
           <td style="padding:8px;border:1px solid #e7e9f2;">${data.customFieldValues
             ? (data.measurementFields ?? []).filter((field) => field.scope === "window" && field.active !== false)
               .map((field) => `${escapeHtml(field.label)}: ${escapeHtml(measurementValueLabel(field, data.customWindowValues?.[index]?.[field.id]))}`).join("<br/>") || "—"
@@ -235,9 +236,9 @@ function renderEmail(template: EmailTemplate, data: TemplateData): { subject: st
           <p><strong>Zákazník:</strong> ${customerName || "—"}<br/><strong>Zákazka:</strong> ${orderTitle}</p>
           <p>${technicalDetails}<br/>
           <strong>Kontakt:</strong> ${escapeHtml([data.customerEmail, data.customerPhone].filter(Boolean).join(" · ") || "—")}</p>
-          <h2 style="font-size:16px;">Okná / miestnosti</h2>
+          <h2 style="font-size:16px;">Priestory</h2>
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
-            <thead><tr><th style="padding:8px;border:1px solid #e7e9f2;">Okno / miestnosť</th><th style="padding:8px;border:1px solid #e7e9f2;">Šírka</th><th style="padding:8px;border:1px solid #e7e9f2;">Výška</th><th style="padding:8px;border:1px solid #e7e9f2;">Typ vodiacej lišty</th><th style="padding:8px;border:1px solid #e7e9f2;">Poznámka</th></tr></thead>
+            <thead><tr><th style="padding:8px;border:1px solid #e7e9f2;">Priestor</th><th style="padding:8px;border:1px solid #e7e9f2;">Rozmer / plocha</th><th style="padding:8px;border:1px solid #e7e9f2;">Parametre</th><th style="padding:8px;border:1px solid #e7e9f2;">Poznámka</th></tr></thead>
             <tbody>${windowRows}</tbody>
           </table>
           <p style="font-size:12px;color:#6b7280;">Vytvorené: ${escapeHtml(data.createdAt ?? "")}</p>

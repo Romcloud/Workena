@@ -189,6 +189,8 @@ export type WorkOrderMeasurementWindow = {
   room: string;
   width: string;
   height: string;
+  size_mode?: "dimensions" | "area";
+  area?: string;
   guide_type: "S" | "Z" | "O" | "STF" | "STF2";
   note: string;
 };

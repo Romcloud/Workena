@@ -196,6 +196,12 @@ function measurementFieldValueLabel(field: MeasurementField, value: string | boo
   return field.options?.find((option) => option.value === value)?.label ?? String(value);
 }
 
+function measurementSpaceSizeLabel(space: WorkOrderMeasurementWindow) {
+  return space.size_mode === "area" && space.area
+    ? `${space.area} m²`
+    : `${space.width} × ${space.height} mm`;
+}
+
 function measurementLegacyValues(measurement: WorkOrderMeasurement): MeasurementCustomFields {
   return {
     configured: true,
@@ -243,10 +249,10 @@ async function downloadMeasurementPdf(order: WorkOrder | null, measurement: Work
           `Počet ovládačov: ${measurementControlsLabel(measurement.controls, measurement.controls_other)}`,
         ].map((text) => ({ text, margin: [0, 0, 0, 4] as [number, number, number, number] }))),
       { text: `Kontakt: ${[measurement.customer_email, measurement.customer_phone].filter(Boolean).join(" · ") || "—"}`, margin: [0, 0, 0, 4] },
-      { text: "Okná / miestnosti", style: "heading" },
+      { text: "Priestory", style: "heading" },
       ...measurement.windows.flatMap((item, index) => [
         { text: `${index + 1}. ${item.room}`, bold: true, margin: [0, 8, 0, 3] as [number, number, number, number] },
-        { text: `Šírka: ${item.width} mm · Výška: ${item.height} mm` },
+        { text: `Rozmer: ${measurementSpaceSizeLabel(item)}` },
         ...(measurement.custom_fields?.configured
           ? fields.filter((field) => field.scope === "window").map((field) => ({
             text: `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.windows?.[index]?.[field.id])}`,
@@ -270,8 +276,7 @@ function downloadMeasurementReport(
   const rows = measurement.windows.map((window, index) => `
     <tr>
       <td>${index + 1}. ${escapeHtml(window.room)}</td>
-      <td>${escapeHtml(window.width)} mm</td>
-      <td>${escapeHtml(window.height)} mm</td>
+      <td>${escapeHtml(measurementSpaceSizeLabel(window))}</td>
       <td>${escapeHtml(measurement.custom_fields?.configured
         ? fields.filter((field) => field.scope === "window")
           .map((field) => `${escapeHtml(field.label)}: ${escapeHtml(measurementFieldValueLabel(field, measurement.custom_fields?.windows?.[index]?.[field.id]))}`).join("<br>") || "—"
@@ -297,8 +302,8 @@ ${measurement.custom_fields?.configured
 <dt>Počet ovládačov</dt><dd>${escapeHtml(measurementControlsLabel(measurement.controls, measurement.controls_other))}</dd>`}
 <dt>Kontakt</dt><dd>${escapeHtml([measurement.customer_email, measurement.customer_phone].filter(Boolean).join(" · ") || "—")}</dd>
 </dl>
-<h2>Okná / miestnosti</h2>
-<table><thead><tr><th>Okno / miestnosť</th><th>Šírka</th><th>Výška</th><th>Typ vodiacej lišty</th><th>Poznámka</th></tr></thead><tbody>${rows}</tbody></table>
+<h2>Priestory</h2>
+<table><thead><tr><th>Priestor</th><th>Rozmer / plocha</th><th>Parametre</th><th>Poznámka</th></tr></thead><tbody>${rows}</tbody></table>
 </html>`;
   const objectUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
   const anchor = document.createElement("a");
@@ -528,6 +533,7 @@ export function App() {
   const [measurementSavedRecordId, setMeasurementSavedRecordId] = useState<string | null>(null);
   const [editingMeasurement, setEditingMeasurement] = useState<WorkOrderMeasurement | null>(null);
   const [measurementWindowIndexes, setMeasurementWindowIndexes] = useState<number[]>([0]);
+  const [measurementSpaceModes, setMeasurementSpaceModes] = useState<Record<number, "dimensions" | "area">>({});
   const [measurementFields, setMeasurementFields] = useState<MeasurementField[]>([]);
   const [draftMeasurementFields, setDraftMeasurementFields] = useState<MeasurementField[]>([]);
   const [showMeasurementSettings, setShowMeasurementSettings] = useState(false);
@@ -2637,15 +2643,22 @@ export function App() {
           values,
           windows: windowValues,
         };
-        const windows = measurementWindowIndexes.map((index, row) => ({
-          room: String(form.get(`window_room_${index}`) ?? "").trim(),
-          width: String(form.get(`window_width_${index}`) ?? "").trim(),
-          height: String(form.get(`window_height_${index}`) ?? "").trim(),
-          guide_type: (["S", "Z", "O", "STF", "STF2"] as string[]).includes(String(windowValues[row]?.guide_type))
-            ? String(windowValues[row]?.guide_type) as WorkOrderMeasurementWindow["guide_type"]
-            : "S" as const,
-          note: String(form.get(`window_note_${index}`) ?? "").trim(),
-        }));
+        const windows = measurementWindowIndexes.map((index, row) => {
+          const sizeMode: WorkOrderMeasurementWindow["size_mode"] = String(form.get(`window_size_mode_${index}`) ?? "dimensions") === "area"
+            ? "area"
+            : "dimensions";
+          return {
+            room: String(form.get(`window_room_${index}`) ?? "").trim(),
+            width: sizeMode === "area" ? "1" : String(form.get(`window_width_${index}`) ?? ""),
+            height: sizeMode === "area" ? "1" : String(form.get(`window_height_${index}`) ?? ""),
+            size_mode: sizeMode,
+            ...(sizeMode === "area" ? { area: String(form.get(`window_area_${index}`) ?? "").trim() } : {}),
+            guide_type: (["S", "Z", "O", "STF", "STF2"] as string[]).includes(String(windowValues[row]?.guide_type))
+              ? String(windowValues[row]?.guide_type) as WorkOrderMeasurementWindow["guide_type"]
+              : "S" as const,
+            note: String(form.get(`window_note_${index}`) ?? "").trim(),
+          };
+        });
         const value = (id: string, fallback: string) => String(values[id] ?? fallback);
         const configuredControlType = value("control_type", "MANUAL");
         const configuredBoxType = value("box_type", "SURFACE");
@@ -2745,6 +2758,7 @@ export function App() {
       setSelectedMeasurementCustomerId(null);
       setMeasurementSavedRecordId(null);
       setEditingMeasurement(null);
+      setMeasurementSpaceModes({});
     } catch (reason: unknown) {
       setError(errorText(reason));
     } finally {
@@ -2769,6 +2783,7 @@ export function App() {
       setSelectedMeasurementCustomerId(measurementPickerTargetId);
     }
     setMeasurementWindowIndexes([0]);
+    setMeasurementSpaceModes({ 0: "dimensions" });
     setMeasurementSavedRecordId(null);
     setEditingMeasurement(null);
     setError("");
@@ -5147,7 +5162,7 @@ export function App() {
                     <option value="text">Text</option><option value="number">Číslo</option><option value="select">Výber</option><option value="boolean">Áno / nie</option>
                   </select></label>
                   <label className="field"><span>Umiestnenie</span><select value={field.scope} onChange={(event) => updateField({ scope: event.target.value as MeasurementField["scope"] })}>
-                    <option value="measurement">Celé zameranie</option><option value="window">Okno / miestnosť</option>
+                    <option value="measurement">Celé zameranie</option><option value="window">Priestor</option>
                   </select></label>
                   <label className="permission-toggle"><input type="checkbox" checked={field.required} onChange={(event) => updateField({ required: event.target.checked })} /> Povinné</label>
                   <label className="permission-toggle"><input type="checkbox" checked={field.active} onChange={(event) => updateField({ active: event.target.checked })} /> Zobrazovať</label>
@@ -5180,7 +5195,7 @@ export function App() {
                         .map((field) => `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.values?.[field.id])}`).join(" · ") || "Záznam zo zamerania"
                       : `${MEASUREMENT_CONTROL_LABELS[measurement.control_type]} · ${measurement.color}`}</strong><small>{dateLabel(measurement.created_at)}</small></div>
                     {!measurement.custom_fields?.configured && <p>Typ boxu: {MEASUREMENT_BOX_LABELS[measurement.box_type]} · Typ špalety: {MEASUREMENT_REVEAL_LABELS[measurement.reveal_type]} · Bočnice: {measurement.side_panels ? "Áno" : "Nie"} · Počet ovládačov: {measurementControlsLabel(measurement.controls, measurement.controls_other)}</p>}
-                    <ul>{measurement.windows.map((window, index) => <li key={`${measurement.id}-${index}`}><strong>{window.room}</strong> · {window.width} × {window.height} mm · {measurement.custom_fields?.configured
+                    <ul>{measurement.windows.map((window, index) => <li key={`${measurement.id}-${index}`}><strong>{window.room}</strong> · {measurementSpaceSizeLabel(window)} · {measurement.custom_fields?.configured
                       ? measurementFields.filter((field) => field.scope === "window" && measurement.custom_fields?.windows?.[index]?.[field.id] !== undefined)
                         .map((field) => `${field.label}: ${measurementFieldValueLabel(field, measurement.custom_fields?.windows?.[index]?.[field.id])}`).join(" · ") || "—"
                       : `Vodiaca lišta ${MEASUREMENT_GUIDE_LABELS[window.guide_type]}`}{window.note ? ` · Poznámka: ${window.note}` : ""}</li>)}</ul>
@@ -5189,6 +5204,7 @@ export function App() {
                         setEditingMeasurement(measurement);
                         setMeasurementSavedRecordId(null);
                         setMeasurementWindowIndexes(measurement.windows.map((_, index) => index));
+                        setMeasurementSpaceModes(Object.fromEntries(measurement.windows.map((space, index) => [index, space.size_mode ?? "dimensions"])));
                         setError("");
                       }}><Pencil size={14} /> Upraviť</button>}
                       <button type="button" className="button button-outline button-small" onClick={() => downloadMeasurementReport(order, measurement, measurementCustomer, measurementFields)}><Download size={14} /> HTML</button>
@@ -5197,7 +5213,7 @@ export function App() {
                   </article>)}</div>}
             </section>
             <form key={editingMeasurement?.id ?? "new"} className="measurement-form form-stack" onSubmit={(event) => void saveWorkOrderMeasurement(event, order, measurementCustomer)}>
-              <div className="section-title-row"><div><h3>{measurementSavedRecordId ? "Záznam je uložený" : editingMeasurement ? "Upraviť zameranie" : "Nové zameranie"}</h3><p>{measurementSavedRecordId ? "Údaje sú uložené. Môžete zopakovať odoslanie alebo stiahnuť súbor." : order?.status === "DONE" ? "Záznamy dokončenej zákazky možno stiahnuť, ale nie upravovať." : "Vyplňte technické údaje a rozmery jednotlivých okien."}</p></div></div>
+              <div className="section-title-row"><div><h3>{measurementSavedRecordId ? "Záznam je uložený" : editingMeasurement ? "Upraviť zameranie" : "Nové zameranie"}</h3><p>{measurementSavedRecordId ? "Údaje sú uložené. Môžete zopakovať odoslanie alebo stiahnuť súbor." : order?.status === "DONE" ? "Záznamy dokončenej zákazky možno stiahnuť, ale nie upravovať." : "Vyplňte technické údaje a rozmery jednotlivých priestorov."}</p></div></div>
               <fieldset className="measurement-fieldset" disabled={busy || measurementLoading || Boolean(measurementSavedRecordId)}>
                 <div className="form-grid">
                   {measurementFields.filter((field) => field.active && field.scope === "measurement").map((field) => {
@@ -5215,13 +5231,31 @@ export function App() {
                   })}
                 </div>
                 <div className="measurement-windows">
-                  <div className="section-title-row"><div><h3>Okná / miestnosti</h3><p>Najviac 50 položiek v jednom zázname.</p></div></div>
+                  <div className="section-title-row"><div><h3>Priestory</h3><p>Najviac 50 položiek v jednom zázname.</p></div></div>
                   {measurementWindowIndexes.map((index, row) => <div className="measurement-window" key={index}>
-                    <div className="measurement-window-heading"><strong>Okno / miestnosť {row + 1}</strong>{row > 0 && <button type="button" className="button button-quiet button-small" onClick={() => setMeasurementWindowIndexes((current) => current.filter((value) => value !== index))}>Odobrať</button>}</div>
+                    <div className="measurement-window-heading"><strong>Priestor {row + 1}</strong>{row > 0 && <button type="button" className="button button-quiet button-small" onClick={() => {
+                      setMeasurementWindowIndexes((current) => current.filter((value) => value !== index));
+                      setMeasurementSpaceModes((current) => {
+                        const next = { ...current };
+                        delete next[index];
+                        return next;
+                      });
+                    }}>Odobrať</button>}</div>
                     <div className="form-grid">
-                      <label className="field"><span>Okno / miestnosť</span><input name={`window_room_${index}`} maxLength={160} defaultValue={editingMeasurement?.windows[index]?.room ?? ""} placeholder="napr. Obývačka – ľavé okno" required /></label>
-                      <label className="field"><span>Šírka (mm)</span><input type="number" name={`window_width_${index}`} min="1" max="99999" step="1" defaultValue={editingMeasurement?.windows[index]?.width ?? ""} required /></label>
-                      <label className="field"><span>Výška (mm)</span><input type="number" name={`window_height_${index}`} min="1" max="99999" step="1" defaultValue={editingMeasurement?.windows[index]?.height ?? ""} required /></label>
+                      <label className="field"><span>Priestor</span><input name={`window_room_${index}`} maxLength={160} defaultValue={editingMeasurement?.windows[index]?.room ?? ""} placeholder="napr. Obývačka – ľavé okno" required /></label>
+                      <label className="field"><span>Spôsob zadania</span><select name={`window_size_mode_${index}`} value={measurementSpaceModes[index] ?? editingMeasurement?.windows[index]?.size_mode ?? "dimensions"} onChange={(event) => {
+                        const mode = event.target.value as "dimensions" | "area";
+                        setMeasurementSpaceModes((current) => ({ ...current, [index]: mode }));
+                      }}>
+                        <option value="dimensions">Šírka a výška</option>
+                        <option value="area">Plocha v m²</option>
+                      </select></label>
+                      {(measurementSpaceModes[index] ?? editingMeasurement?.windows[index]?.size_mode ?? "dimensions") === "area"
+                        ? <label className="field"><span>Plocha (m²)</span><input type="number" name={`window_area_${index}`} min="0.01" max="999999" step="0.01" defaultValue={editingMeasurement?.windows[index]?.size_mode === "area" ? editingMeasurement.windows[index].area ?? "" : ""} required /></label>
+                        : <>
+                          <label className="field"><span>Šírka (mm)</span><input type="number" name={`window_width_${index}`} min="1" max="99999" step="1" defaultValue={editingMeasurement?.windows[index]?.size_mode === "area" ? "" : editingMeasurement?.windows[index]?.width ?? ""} required /></label>
+                          <label className="field"><span>Výška (mm)</span><input type="number" name={`window_height_${index}`} min="1" max="99999" step="1" defaultValue={editingMeasurement?.windows[index]?.size_mode === "area" ? "" : editingMeasurement?.windows[index]?.height ?? ""} required /></label>
+                        </>}
                       {measurementFields.filter((field) => field.active && field.scope === "window").map((field) => {
                         const value = editingCustomFields?.windows?.[index]?.[field.id]
                           ?? (field.id === "guide_type" ? editingMeasurement?.windows[index]?.guide_type : undefined);
@@ -5238,7 +5272,11 @@ export function App() {
                       })}
                       <label className="field measurement-window-note"><span>Poznámka <small>voliteľná</small></span><input name={`window_note_${index}`} maxLength={1000} defaultValue={editingMeasurement?.windows[index]?.note ?? ""} /></label>
                     </div>
-                    <button type="button" className="button button-outline button-small" disabled={measurementWindowIndexes.length >= 50} onClick={() => setMeasurementWindowIndexes((current) => [...current, Math.max((editingMeasurement?.windows.length ?? 0) - 1, ...current) + 1])}><Plus size={14} /> Pridať ďalšie okno</button>
+                    <button type="button" className="button button-outline button-small" disabled={measurementWindowIndexes.length >= 50} onClick={() => {
+                      const nextIndex = Math.max((editingMeasurement?.windows.length ?? 0) - 1, ...measurementWindowIndexes) + 1;
+                      setMeasurementWindowIndexes((current) => [...current, nextIndex]);
+                      setMeasurementSpaceModes((current) => ({ ...current, [nextIndex]: "dimensions" }));
+                    }}><Plus size={14} /> Pridať priestor</button>
                   </div>)}
                 </div>
               </fieldset>
@@ -5252,6 +5290,7 @@ export function App() {
                 {editingMeasurement && !measurementSavedRecordId && <button type="button" className="button button-quiet" disabled={busy} onClick={() => {
                   setEditingMeasurement(null);
                   setMeasurementWindowIndexes([0]);
+                  setMeasurementSpaceModes({});
                 }}>Zrušiť úpravu</button>}
                 <button className="button button-outline" name="measurement_action" value="DOWNLOAD" disabled={busy || measurementLoading || order?.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Stiahnuť uložený záznam" : "Uložiť a stiahnuť HTML"}</button>
                 <button className="button button-primary button-small" name="measurement_action" value="EMAIL" disabled={busy || measurementLoading || order?.status === "DONE" && !measurementSavedRecordId}>{busy ? "Ukladám…" : measurementSavedRecordId ? "Znova poslať na môj email" : "Uložiť a poslať na môj email"}</button>
