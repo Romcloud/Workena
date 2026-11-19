@@ -464,6 +464,9 @@ async function openStreetMapMultiLegDistance(points: string[]) {
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [showEmailLogin, setShowEmailLogin] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [memberships, setMemberships] = useState<WorkspaceMembership[]>([]);
   const [companyId, setCompanyId] = useState("");
   const [companyJoinMode, setCompanyJoinMode] = useState<"create" | "join">("create");
@@ -1560,6 +1563,23 @@ export function App() {
       setError(signInError.message);
       setBusy(false);
     }
+  };
+
+  const signInWithEmail = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!client) return;
+    setBusy(true);
+    setError("");
+    const { error: signInError } = await client.auth.signInWithPassword({
+      email: loginEmail.trim(),
+      password: loginPassword,
+    });
+    setBusy(false);
+    if (signInError) {
+      setError(signInError.message);
+      return;
+    }
+    setLoginPassword("");
   };
 
   const connectGoogleCalendar = async () => {
@@ -3851,6 +3871,14 @@ export function App() {
             <button className="button button-primary button-large" onClick={() => void signIn()} disabled={busy}>
               Pokračovať cez Google <ArrowRight size={18} />
             </button>
+            <button className="button button-quiet email-login-toggle" type="button" onClick={() => { setShowEmailLogin((shown) => !shown); setError(""); }}>
+              {showEmailLogin ? "Skryť prihlásenie e-mailom" : "Prihlásiť sa e-mailom"}
+            </button>
+            {showEmailLogin && <form className="email-login-form" onSubmit={(event) => void signInWithEmail(event)}>
+              <label className="field"><span>E-mail</span><input type="email" autoComplete="username" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></label>
+              <label className="field"><span>Heslo</span><input type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required /></label>
+              <button className="button button-outline" type="submit" disabled={busy}>{busy ? "Prihlasujem…" : "Prihlásiť sa"}</button>
+            </form>}
             <div className="trust-note"><ShieldCheck size={16} /> Súkromné priestory pre každú firmu</div>
             {error && <p className="form-error" role="alert">{error}</p>}
           </div>

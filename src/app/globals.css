@@ -51,6 +51,9 @@ button:disabled { opacity: .65; cursor: wait; }
 .hero h1 { margin: 23px 0 13px; font: 700 clamp(36px, 4.8vw, 56px)/1.13 var(--serif); letter-spacing: -2.8px; }
 .hero h1 span { color: var(--green); }
 .hero-copy > p { max-width: 480px; margin: 0 0 25px; color: #71786f; font-size: 15px; line-height: 1.8; }
+.email-login-toggle { display: flex; margin-top: 8px; padding-left: 0; color: var(--green-dark); font-size: 12px; }
+.email-login-form { display: grid; max-width: 380px; gap: 12px; margin-top: 10px; }
+.email-login-form .button { justify-self: start; }
 .trust-note { display: flex; align-items: center; gap: 7px; margin-top: 19px; color: #828a81; font-size: 12px; }
 .hero-visual { position: relative; display: grid; min-height: 405px; place-items: center; overflow: hidden; border: 1px solid #e4ebe3; border-radius: 20px; background: linear-gradient(140deg, #eef4eb 0%, #f6f7f1 52%, #e9f1ea 100%); }
 .visual-orb { position: absolute; border: 1px solid #dbe6d9; border-radius: 50%; }

@@ -27,6 +27,12 @@ Workena je statická jednostránková aplikácia v Reacte, TypeScripte a Vite. P
 
 Po prvom prihlásení môže vlastník vytvoriť firemný priestor. V časti **Tím** môže zadať meno a e-mail nového člena. Ak už má používateľ účet vo Workena s daným e-mailom, pridá sa priamo; inak mu príde e-mailová pozvánka s bezpečným prihlasovacím odkazom. Po otvorení odkazu sa používateľ prihlási a automaticky sa pripojí k firme. Pozvánku možno prijať do 7 dní; platnosť samotného prihlasovacieho odkazu určuje nastavenie Supabase Auth.
 
+### Testovací účet pre kontrolórov
+
+Aplikácia podporuje aj prihlásenie e-mailom a heslom, ale verejná registrácia nie je zapnutá. Testovací účet vytvorte v **Supabase → Authentication → Users → Add user** a nastavte mu heslo; neposielajte heslo cez zdrojový kód ani ho neukladajte do repozitára. V aplikácii použite **Prihlásiť sa e-mailom**. Ak účet ešte nemá členstvo vo firme, po prihlásení môže vytvoriť samostatnú demo firmu; na testovanie používajte výhradne vymyslené údaje a ukážkové záznamy, nikdy produkčné údaje.
+
+Kontrolórom poskytnite URL nasadenej aplikácie a prihlasovacie údaje samostatným zabezpečeným kanálom. Ak im stačí prezrieť aplikáciu, pripravte predtým demo firmu a ukážkové údaje. Existujúca testovacia platobná integrácia v tomto repozitári je **GoPay Sandbox**, nie Google Pay; sandboxové platby neaktivujú produkčný plán.
+
 ## 3. Lokálny vývoj a zostavenie
 
 1. Naklonujte repozitár a nainštalujte závislosti:
